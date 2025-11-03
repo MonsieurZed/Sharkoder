@@ -23,6 +23,10 @@ class QueueManager extends EventEmitter {
     this.maxConcurrentDownloads = 1;
     this.maxConcurrentUploads = 1;
 
+    // Progress update throttling to avoid database lock conflicts
+    this.lastProgressUpdate = new Map(); // jobId -> timestamp
+    this.progressUpdateInterval = 1000; // Update DB max once per second per job
+
     // Bind encoder events
     this.encoder.on("progress", (data) => {
       if (this.encodingJob) {
@@ -684,14 +688,27 @@ class QueueManager extends EventEmitter {
       for (const job of interruptedJobs) {
         logger.info(`Resuming interrupted job: ${job.id}`);
 
-        // Clean up any partial files
-        await this.cleanupJobFiles(job);
+        // Check if encoded file exists (job was interrupted during upload)
+        const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+        const encodedExists = await fs.pathExists(encodedPath);
 
-        await updateJob(job.id, {
-          status: "waiting",
-          progress: 0,
-          error: null,
-        });
+        if (job.status === "uploading" && encodedExists) {
+          // If interrupted during upload and encoded file exists, resume from ready_upload
+          logger.info(`Job ${job.id} has valid encoded file, resuming from upload phase`);
+          await updateJob(job.id, {
+            status: "ready_upload",
+            progress: 0,
+            error: null,
+          });
+        } else {
+          // Otherwise, clean up and restart from beginning
+          await this.cleanupJobFiles(job);
+          await updateJob(job.id, {
+            status: "waiting",
+            progress: 0,
+            error: null,
+          });
+        }
       }
 
       if (interruptedJobs.length > 0) {
@@ -712,10 +729,17 @@ class QueueManager extends EventEmitter {
       eta: null,
     };
 
-    updateJob(jobId, {
-      progress: progress.progress,
-      status: "downloading",
-    }).catch((err) => logger.error("Failed to update job progress:", err));
+    // Throttle database updates to avoid SQLITE_BUSY errors
+    const now = Date.now();
+    const lastUpdate = this.lastProgressUpdate.get(jobId) || 0;
+
+    if (now - lastUpdate >= this.progressUpdateInterval) {
+      this.lastProgressUpdate.set(jobId, now);
+      updateJob(jobId, {
+        progress: progress.progress,
+        status: "downloading",
+      }).catch((err) => logger.error("Failed to update job progress:", err));
+    }
 
     this.emit("progress", progressData);
   }
@@ -725,15 +749,26 @@ class QueueManager extends EventEmitter {
       jobId,
       type: "encoding",
       progress: progress.progress,
-      speed: progress.fps || 0,
+      fps: progress.fps || 0,
+      speed: progress.speed || 0,
       eta: progress.eta,
+      currentTime: progress.currentTime,
+      totalDuration: progress.totalDuration,
+      elapsedTime: progress.elapsedTime,
     };
 
-    updateJob(jobId, {
-      progress: progress.progress,
-      eta: progress.eta,
-      status: "encoding",
-    }).catch((err) => logger.error("Failed to update job progress:", err));
+    // Throttle database updates to avoid SQLITE_BUSY errors
+    const now = Date.now();
+    const lastUpdate = this.lastProgressUpdate.get(jobId) || 0;
+
+    if (now - lastUpdate >= this.progressUpdateInterval) {
+      this.lastProgressUpdate.set(jobId, now);
+      updateJob(jobId, {
+        progress: progress.progress,
+        eta: progress.eta,
+        status: "encoding",
+      }).catch((err) => logger.error("Failed to update job progress:", err));
+    }
 
     this.emit("progress", progressData);
   }
@@ -747,10 +782,17 @@ class QueueManager extends EventEmitter {
       eta: null,
     };
 
-    updateJob(jobId, {
-      progress: progress.progress,
-      status: "uploading",
-    }).catch((err) => logger.error("Failed to update job progress:", err));
+    // Throttle database updates to avoid SQLITE_BUSY errors
+    const now = Date.now();
+    const lastUpdate = this.lastProgressUpdate.get(jobId) || 0;
+
+    if (now - lastUpdate >= this.progressUpdateInterval) {
+      this.lastProgressUpdate.set(jobId, now);
+      updateJob(jobId, {
+        progress: progress.progress,
+        status: "uploading",
+      }).catch((err) => logger.error("Failed to update job progress:", err));
+    }
 
     this.emit("progress", progressData);
   }

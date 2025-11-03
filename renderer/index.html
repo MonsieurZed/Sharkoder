@@ -1297,7 +1297,8 @@
                               </div>
                             </div>
                             <div className="flex items-center space-x-3">
-                              <StatusBadge status={job.status} />
+                              {/* Only show status badge if not in processing state (processing states show their own indicator) */}
+                              {!(job.status === "downloading" || job.status === "encoding" || job.status === "uploading") && <StatusBadge status={job.status} />}
 
                               {/* Action buttons */}
                               <div className="flex space-x-2">
@@ -1322,7 +1323,13 @@
                                 )}
 
                                 {/* Failed or ready jobs - Retry button */}
-                                {(job.status === "failed" || job.status === "ready_encode" || job.status === "ready_upload" || job.status === "waiting" || job.status === "paused") && (
+                                {/* Only show retry for failed jobs if they at least started downloading (have started_at) */}
+                                {/* Always show for ready_encode, ready_upload, waiting, paused states */}
+                                {((job.status === "failed" && job.started_at) ||
+                                  job.status === "ready_encode" ||
+                                  job.status === "ready_upload" ||
+                                  job.status === "waiting" ||
+                                  job.status === "paused") && (
                                   <button onClick={() => onRetryJob(job.id)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm transition-colors" title="Réessayer">
                                     🔄 Réessayer
                                   </button>

@@ -1,47 +1,30 @@
-const { EventEmitter } = require('events');
-const path = require('path');
-const fs = require('fs-extra');
-const { VideoEncoder } = require('./encode');
-const { 
-  createJob, 
-  updateJob, 
-  getJobsByStatus, 
-  markJobStarted, 
-  markJobCompleted, 
-  markJobFailed,
-  getAllJobs,
-  deleteJob,
-  getJobStats
-} = require('./db');
-const { 
-  logger, 
-  ensureSpaceAvailable, 
-  calculateFileHash, 
-  createBackupPath, 
-  formatBytes, 
-  retry, 
-  sleep 
-} = require('./utils');
+const { EventEmitter } = require("events");
+const path = require("path");
+const fs = require("fs-extra");
+const { VideoEncoder } = require("./encode");
+const { createJob, updateJob, getJobsByStatus, markJobStarted, markJobCompleted, markJobFailed, getAllJobs, deleteJob, getJobStats } = require("./db");
+const { logger, ensureSpaceAvailable, calculateFileHash, createBackupPath, formatBytes, retry, sleep, safeFileMove, safeFileDelete } = require("./utils");
 
 class QueueManager extends EventEmitter {
-  constructor(config, sftpManager) {
+  constructor(config, transferManager) {
     super();
     this.config = config;
-    this.sftpManager = sftpManager;
-    this.encoder = new VideoEncoder(config, sftpManager); // Pass sftpManager
+    this.transferManager = transferManager;
+    this.encoder = new VideoEncoder(config, transferManager); // Pass transferManager
     this.isRunning = false;
     this.isPaused = false;
-    
+
     // Pipeline stages: each job can be in one of these stages simultaneously
     this.downloadingJobs = new Map(); // jobId -> { job, localPath, promise }
     this.encodingJob = null; // Only one encoding at a time
     this.uploadingJobs = new Map(); // jobId -> { job, encodedPath, promise }
-    
-    this.maxConcurrentDownloads = 2;
-    this.maxConcurrentUploads = 2;
+
+    // Sequential downloads for stability and speed
+    this.maxConcurrentDownloads = 1;
+    this.maxConcurrentUploads = 1;
 
     // Bind encoder events
-    this.encoder.on('progress', (data) => {
+    this.encoder.on("progress", (data) => {
       if (this.encodingJob) {
         this.handleEncodingProgress(this.encodingJob.id, data);
       }
@@ -54,12 +37,12 @@ class QueueManager extends EventEmitter {
     }
 
     this.isRunning = true;
-    logger.info('Queue manager started');
+    logger.info("Queue manager started");
 
     // Check for ghost files from previous crash
     const ghostState = await this.encoder.cleanupGhostFile();
     if (ghostState) {
-      logger.info('Cleaned up interrupted encoding, will retry');
+      logger.info("Cleaned up interrupted encoding, will retry");
     }
 
     // Resume any interrupted jobs
@@ -67,9 +50,6 @@ class QueueManager extends EventEmitter {
 
     // Start processing loop
     this.processQueue();
-
-    // Start prefetch loop
-    this.prefetchLoop();
   }
 
   async stop() {
@@ -80,44 +60,63 @@ class QueueManager extends EventEmitter {
     this.isRunning = false;
     this.isPaused = true;
 
+    logger.info("Stopping queue manager and resetting jobs...");
+
     // Stop current encoding
     if (this.encoder.isCurrentlyEncoding()) {
       await this.encoder.stopEncoding();
     }
 
     // Wait for all pipeline stages to complete
-    await Promise.allSettled([
-      ...Array.from(this.downloadingJobs.values()).map(d => d.promise),
-      ...Array.from(this.uploadingJobs.values()).map(u => u.promise)
-    ]);
+    await Promise.allSettled([...Array.from(this.downloadingJobs.values()).map((d) => d.promise), ...Array.from(this.uploadingJobs.values()).map((u) => u.promise)]);
 
-    logger.info('Queue manager stopped');
+    // Reset all jobs in progress back to waiting (except completed ones)
+    const { getJobsByStatus, updateJob } = require("./db");
+    const processingStatuses = ["downloading", "ready_encode", "encoding", "ready_upload", "uploading", "paused"];
+
+    for (const status of processingStatuses) {
+      const jobs = await getJobsByStatus(status);
+      for (const job of jobs) {
+        await updateJob(job.id, {
+          status: "waiting",
+          error: null,
+        });
+        logger.info(`Reset job ${job.id} from ${status} to waiting`);
+      }
+    }
+
+    // Clear pipeline stages
+    this.downloadingJobs.clear();
+    this.encodingJob = null;
+    this.uploadingJobs.clear();
+
+    logger.info("Queue manager stopped - All jobs reset to waiting");
   }
 
   pause() {
     if (!this.isRunning) {
-      logger.warn('Cannot pause: queue is not running');
+      logger.warn("Cannot pause: queue is not running");
       return;
     }
 
     this.isPaused = true;
-    logger.info('Queue processing paused');
+    logger.info("Queue processing paused");
   }
 
   resume() {
     if (!this.isRunning) {
-      logger.warn('Cannot resume: queue is not running');
+      logger.warn("Cannot resume: queue is not running");
       return;
     }
 
     if (!this.isPaused) {
-      logger.warn('Queue is not paused');
+      logger.warn("Queue is not paused");
       return;
     }
 
     this.isPaused = false;
-    logger.info('Queue processing resumed');
-    
+    logger.info("Queue processing resumed");
+
     // Trigger processing of next job
     this.processQueue();
   }
@@ -128,16 +127,16 @@ class QueueManager extends EventEmitter {
         filepath: filePath,
         size: fileInfo.size || 0,
         codec_before: fileInfo.codec || null,
-        status: 'waiting'
+        status: "waiting",
       };
 
       const jobId = await createJob(jobData);
       logger.info(`Added job ${jobId}: ${filePath}`);
 
-      this.emit('jobAdded', { id: jobId, ...jobData });
+      this.emit("jobAdded", { id: jobId, ...jobData });
       return jobId;
     } catch (error) {
-      logger.error('Failed to add job:', error);
+      logger.error("Failed to add job:", error);
       throw error;
     }
   }
@@ -148,11 +147,11 @@ class QueueManager extends EventEmitter {
       if (this.encodingJob && this.encodingJob.id === jobId) {
         await this.stopCurrentJob();
       }
-      
+
       if (this.downloadingJobs.has(jobId)) {
         this.downloadingJobs.delete(jobId);
       }
-      
+
       if (this.uploadingJobs.has(jobId)) {
         this.uploadingJobs.delete(jobId);
       }
@@ -166,9 +165,9 @@ class QueueManager extends EventEmitter {
       await deleteJob(jobId);
       logger.info(`Removed job ${jobId}`);
 
-      this.emit('jobRemoved', { id: jobId });
+      this.emit("jobRemoved", { id: jobId });
     } catch (error) {
-      logger.error('Failed to remove job:', error);
+      logger.error("Failed to remove job:", error);
       throw error;
     }
   }
@@ -179,30 +178,30 @@ class QueueManager extends EventEmitter {
       if (this.encodingJob && this.encodingJob.id === jobId) {
         await this.stopCurrentJob();
       }
-      
+
       if (this.downloadingJobs.has(jobId)) {
         this.downloadingJobs.delete(jobId);
       }
-      
+
       if (this.uploadingJobs.has(jobId)) {
         this.uploadingJobs.delete(jobId);
       }
 
-      await updateJob(jobId, { status: 'paused' });
+      await updateJob(jobId, { status: "paused" });
       logger.info(`Paused job ${jobId}`);
 
-      this.emit('jobPaused', { id: jobId });
+      this.emit("jobPaused", { id: jobId });
     } catch (error) {
-      logger.error('Failed to pause job:', error);
+      logger.error("Failed to pause job:", error);
       throw error;
     }
   }
 
   async resumeJob(jobId) {
     try {
-      await updateJob(jobId, { 
-        status: 'waiting',
-        error: null 
+      await updateJob(jobId, {
+        status: "waiting",
+        error: null,
       });
 
       if (this.isPaused) {
@@ -210,9 +209,9 @@ class QueueManager extends EventEmitter {
       }
 
       logger.info(`Resumed job ${jobId}`);
-      this.emit('jobResumed', { id: jobId });
+      this.emit("jobResumed", { id: jobId });
     } catch (error) {
-      logger.error('Failed to resume job:', error);
+      logger.error("Failed to resume job:", error);
       throw error;
     }
   }
@@ -221,7 +220,7 @@ class QueueManager extends EventEmitter {
     try {
       const job = await this.getJob(jobId);
       if (!job) {
-        throw new Error('Job not found');
+        throw new Error("Job not found");
       }
 
       // Clean up any existing files
@@ -229,18 +228,44 @@ class QueueManager extends EventEmitter {
 
       // Reset job status
       await updateJob(jobId, {
-        status: 'waiting',
+        status: "waiting",
         progress: 0,
         eta: null,
         error: null,
         started_at: null,
-        finished_at: null
+        finished_at: null,
       });
 
       logger.info(`Retrying job ${jobId}`);
-      this.emit('jobRetried', { id: jobId });
+      this.emit("jobRetried", { id: jobId });
     } catch (error) {
-      logger.error('Failed to retry job:', error);
+      logger.error("Failed to retry job:", error);
+      throw error;
+    }
+  }
+
+  async clearAllJobs() {
+    try {
+      // Stop queue if running
+      if (this.isRunning) {
+        await this.stop();
+      }
+
+      // Get all jobs
+      const allJobs = await getAllJobs();
+
+      // Remove each job
+      for (const job of allJobs) {
+        await this.cleanupJobFiles(job);
+        await deleteJob(job.id);
+      }
+
+      logger.info(`Cleared ${allJobs.length} jobs from queue`);
+      this.emit("queueCleared", { count: allJobs.length });
+
+      return allJobs.length;
+    } catch (error) {
+      logger.error("Failed to clear queue:", error);
       throw error;
     }
   }
@@ -251,43 +276,54 @@ class QueueManager extends EventEmitter {
 
   async getJob(jobId) {
     const jobs = await getAllJobs();
-    return jobs.find(job => job.id === jobId);
+    return jobs.find((job) => job.id === jobId);
   }
 
   async getQueueStats() {
     return await getJobStats();
   }
 
-  // Main processing loop - manages the pipeline
+  // Main processing loop - manages the pipeline (optimized)
   async processQueue() {
     while (this.isRunning) {
       try {
         if (this.isPaused) {
-          await sleep(2000);
+          await sleep(1000);
           continue;
         }
 
-        // Stage 1: Start downloads (parallel, up to maxConcurrentDownloads)
-        if (this.downloadingJobs.size < this.maxConcurrentDownloads) {
-          await this.startNextDownload();
-        }
+        // Execute all stages in parallel for better throughput
+        await Promise.all([
+          // Stage 1: Start downloads (parallel, up to maxConcurrentDownloads)
+          (async () => {
+            while (this.downloadingJobs.size < this.maxConcurrentDownloads && this.isRunning && !this.isPaused) {
+              const started = await this.startNextDownload();
+              if (!started) break;
+            }
+          })(),
 
-        // Stage 2: Start encoding (only if no encoding in progress and download completed)
-        if (!this.encodingJob) {
-          await this.startNextEncoding();
-        }
+          // Stage 2: Start encoding (only if no encoding in progress)
+          (async () => {
+            if (!this.encodingJob && this.isRunning && !this.isPaused) {
+              await this.startNextEncoding();
+            }
+          })(),
 
-        // Stage 3: Start uploads (parallel, up to maxConcurrentUploads)
-        if (this.uploadingJobs.size < this.maxConcurrentUploads) {
-          await this.startNextUpload();
-        }
+          // Stage 3: Start uploads (parallel, up to maxConcurrentUploads)
+          (async () => {
+            while (this.uploadingJobs.size < this.maxConcurrentUploads && this.isRunning && !this.isPaused) {
+              const started = await this.startNextUpload();
+              if (!started) break;
+            }
+          })(),
+        ]);
 
-        // Wait before next iteration
-        await sleep(1000);
+        // Shorter wait for more responsive queue
+        await sleep(500);
       } catch (error) {
-        logger.error('Error in processing queue:', error);
-        this.emit('error', error);
-        await sleep(5000); // Longer wait after error
+        logger.error("Error in processing queue:", error);
+        this.emit("error", error);
+        await sleep(3000); // Shorter wait after error
       }
     }
   }
@@ -295,10 +331,10 @@ class QueueManager extends EventEmitter {
   // Stage 1: Download next file
   async startNextDownload() {
     try {
-      const waitingJobs = await getJobsByStatus('waiting');
-      
+      const waitingJobs = await getJobsByStatus("waiting");
+
       if (waitingJobs.length === 0) {
-        return;
+        return false;
       }
 
       const job = waitingJobs[0];
@@ -308,49 +344,45 @@ class QueueManager extends EventEmitter {
 
       logger.info(`[DOWNLOAD] Starting job ${job.id}: ${job.filepath}`);
       await markJobStarted(job.id);
-      await updateJob(job.id, { status: 'downloading' });
+      await updateJob(job.id, { status: "downloading" });
 
-      const localPath = path.join(
-        this.config.local_temp,
-        'downloaded',
-        `${job.id}_${path.basename(job.filepath)}`
-      );
+      const localPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
 
       await fs.ensureDir(path.dirname(localPath));
 
       // Start download asynchronously
-      const downloadPromise = this.sftpManager.downloadFileWithRetry(
-        job.filepath,
-        localPath,
-        (progress) => {
+      const downloadPromise = this.transferManager
+        .downloadFile(job.filepath, localPath, (progress) => {
           this.handleDownloadProgress(job.id, progress);
-        }
-      ).then(() => {
-        logger.info(`[DOWNLOAD] Completed job ${job.id}`);
-        this.downloadingJobs.delete(job.id);
-        
-        // Update job status to ready for encoding
-        return updateJob(job.id, { status: 'ready_encode' });
-      }).catch(async (error) => {
-        logger.error(`[DOWNLOAD] Failed job ${job.id}:`, error);
-        this.downloadingJobs.delete(job.id);
-        await markJobFailed(job.id, error);
-        await this.cleanupJobFiles(job);
-      });
+        })
+        .then(() => {
+          logger.info(`[DOWNLOAD] Completed job ${job.id}`);
+          this.downloadingJobs.delete(job.id);
+
+          // Update job status to ready for encoding
+          return updateJob(job.id, { status: "ready_encode" });
+        })
+        .catch(async (error) => {
+          logger.error(`[DOWNLOAD] Failed job ${job.id}:`, error);
+          this.downloadingJobs.delete(job.id);
+          await markJobFailed(job.id, error);
+          await this.cleanupJobFiles(job);
+        });
 
       this.downloadingJobs.set(job.id, { job, localPath, promise: downloadPromise });
-      this.emit('jobStarted', job);
-
+      this.emit("jobStarted", job);
+      return true;
     } catch (error) {
-      logger.error('Error starting download:', error);
+      logger.error("Error starting download:", error);
+      return false;
     }
   }
 
   // Stage 2: Encode next file (only one at a time)
   async startNextEncoding() {
     try {
-      const readyJobs = await getJobsByStatus('ready_encode');
-      
+      const readyJobs = await getJobsByStatus("ready_encode");
+
       if (readyJobs.length === 0) {
         return;
       }
@@ -358,70 +390,105 @@ class QueueManager extends EventEmitter {
       const job = readyJobs[0];
       this.encodingJob = job;
 
-      const localPath = path.join(
-        this.config.local_temp,
-        'downloaded',
-        `${job.id}_${path.basename(job.filepath)}`
-      );
+      const localPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
 
       logger.info(`[ENCODE] Starting job ${job.id}: ${job.filepath}`);
-      await updateJob(job.id, { status: 'encoding' });
+      await updateJob(job.id, { status: "encoding" });
 
       try {
         // Get video info
         const videoInfo = await this.encoder.getVideoInfo(localPath);
-        await updateJob(job.id, { codec_before: videoInfo.video.codec });
+        const codecBefore = videoInfo.video.codec;
+        logger.info(`[ENCODE] Detected codec: ${codecBefore}`);
+        await updateJob(job.id, { codec_before: codecBefore });
+
+        // Check if already encoded in HEVC/H.265
+        if (codecBefore === "hevc" || codecBefore === "h265" || codecBefore.includes("265")) {
+          logger.info(`[ENCODE] Job ${job.id} already in HEVC/H.265 format (codec: ${codecBefore}), skipping encoding`);
+
+          // Copy file instead of re-encoding
+          const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+          await fs.ensureDir(path.dirname(encodedPath));
+          logger.info(`[ENCODE] Copying file: ${localPath} -> ${encodedPath}`);
+          await fs.copy(localPath, encodedPath);
+
+          logger.info(`[ENCODE] File copied, updating job status to ready_upload`);
+
+          // Update to ready for upload
+          await updateJob(job.id, {
+            status: "ready_upload",
+            codec_after: codecBefore,
+          });
+
+          await this.updateProgressFile(job, {
+            originalSize: videoInfo.size,
+            encodedSize: videoInfo.size,
+            codecBefore: codecBefore,
+            codecAfter: codecBefore,
+            duration: videoInfo.duration,
+            encodingTime: 0,
+            skipped: true,
+            reason: "Already HEVC",
+          });
+
+          logger.info(`[ENCODE] Job ${job.id} completed (skipped encoding)`);
+          this.encodingJob = null;
+          this.emit("jobUpdate", { id: job.id, status: "ready_upload" });
+          return;
+        }
 
         // Encode
-        const encodedPath = path.join(
-          this.config.local_temp,
-          'encoded',
-          `${job.id}_${path.basename(job.filepath)}`
-        );
+        const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
         await fs.ensureDir(path.dirname(encodedPath));
 
-        const result = await this.encoder.encodeVideo(
-          localPath,
-          encodedPath,
-          (progress) => {
-            this.handleEncodingProgress(job.id, progress);
-          }
-        );
+        const result = await this.encoder.encodeVideo(localPath, encodedPath, (progress) => {
+          this.handleEncodingProgress(job.id, progress);
+        });
 
         logger.info(`[ENCODE] Completed job ${job.id}`);
 
         // Create backup of original
         await this.createBackup(localPath, job);
 
+        // Determine actual codec used (GPU or CPU)
+        const codecAfter = this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)";
+
         // Update progress file
         const encodedInfo = await this.encoder.getVideoInfo(result.outputPath);
         await this.updateProgressFile(job, {
           originalSize: videoInfo.size,
           encodedSize: encodedInfo.size,
-          codecBefore: videoInfo.video.codec,
-          codecAfter: 'hevc_nvenc',
+          codecBefore: codecBefore,
+          codecAfter: codecAfter,
           duration: videoInfo.duration,
-          encodingTime: (Date.now() - new Date(job.started_at)) / 1000
+          encodingTime: (Date.now() - new Date(job.started_at)) / 1000,
         });
 
         // Update job status to ready for upload
-        await updateJob(job.id, { 
-          status: 'ready_upload',
-          codec_after: 'hevc_nvenc'
+        await updateJob(job.id, {
+          status: "ready_upload",
+          codec_after: codecAfter,
         });
 
         this.encodingJob = null;
-
       } catch (error) {
         logger.error(`[ENCODE] Failed job ${job.id}:`, error);
+        logger.error(`[ENCODE] Error details:`, error.message || error);
         this.encodingJob = null;
+
+        // Update UI with error
+        this.emit("jobUpdate", {
+          id: job.id,
+          status: "failed",
+          error: error.message || "Encoding failed",
+        });
+
         await markJobFailed(job.id, error);
         await this.cleanupJobFiles(job);
       }
-
     } catch (error) {
-      logger.error('Error starting encoding:', error);
+      logger.error("Error starting encoding:", error);
       this.encodingJob = null;
     }
   }
@@ -429,67 +496,77 @@ class QueueManager extends EventEmitter {
   // Stage 3: Upload next file
   async startNextUpload() {
     try {
-      const readyJobs = await getJobsByStatus('ready_upload');
-      
+      const readyJobs = await getJobsByStatus("ready_upload");
+
       if (readyJobs.length === 0) {
-        return;
+        return false;
       }
 
       const job = readyJobs[0];
 
-      const encodedPath = path.join(
-        this.config.local_temp,
-        'encoded',
-        `${job.id}_${path.basename(job.filepath)}`
-      );
+      const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
       logger.info(`[UPLOAD] Starting job ${job.id}: ${job.filepath}`);
-      await updateJob(job.id, { status: 'uploading' });
+      await updateJob(job.id, { status: "uploading" });
 
       // Start upload asynchronously
-      const uploadPromise = this.sftpManager.uploadFileWithRetry(
-        encodedPath,
-        job.filepath,
-        (progress) => {
+      const uploadPromise = this.transferManager
+        .uploadFile(encodedPath, job.filepath, (progress) => {
           this.handleUploadProgress(job.id, progress);
-        }
-      ).then(async () => {
-        logger.info(`[UPLOAD] Completed job ${job.id}`);
-        this.uploadingJobs.delete(job.id);
-        
-        // Mark job as completed
-        await markJobCompleted(job.id, job.codec_after || 'hevc_nvenc');
-        await this.cleanupJobFiles(job);
-        
-        this.emit('jobComplete', job);
+        })
+        .then(async () => {
+          logger.info(`[UPLOAD] Completed job ${job.id}`);
+          this.uploadingJobs.delete(job.id);
 
-      }).catch(async (error) => {
-        logger.error(`[UPLOAD] Failed job ${job.id}:`, error);
-        this.uploadingJobs.delete(job.id);
-        await markJobFailed(job.id, error);
-        await this.cleanupJobFiles(job);
-      });
+          // Delete the backup file (.original.bak) on success
+          try {
+            await this.transferManager.deleteBackupFile(job.filepath);
+          } catch (error) {
+            logger.warn(`Could not delete backup file:`, error);
+          }
+
+          // Mark job as completed with actual codec used
+          const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
+          await markJobCompleted(job.id, codecAfter);
+          await this.cleanupJobFiles(job);
+
+          this.emit("jobComplete", job);
+        })
+        .catch(async (error) => {
+          logger.error(`[UPLOAD] Failed job ${job.id}:`, error);
+          this.uploadingJobs.delete(job.id);
+
+          // Restore the backup file (.original.bak) on failure
+          try {
+            const restored = await this.transferManager.restoreBackupFile(job.filepath);
+            if (restored) {
+              logger.info(`Original file restored after upload failure`);
+            }
+          } catch (restoreError) {
+            logger.warn(`Could not restore backup file:`, restoreError);
+          }
+
+          await markJobFailed(job.id, error);
+          await this.cleanupJobFiles(job);
+        });
 
       this.uploadingJobs.set(job.id, { job, encodedPath, promise: uploadPromise });
-
+      return true;
     } catch (error) {
-      logger.error('Error starting upload:', error);
+      logger.error("Error starting upload:", error);
+      return false;
     }
   }
 
-
-
   async createBackup(originalPath, job) {
     const backupPath = createBackupPath(job.filepath, this.config.local_backup);
-    
+
     await fs.ensureDir(path.dirname(backupPath));
     await fs.copy(originalPath, backupPath);
 
     logger.info(`Created backup: ${backupPath}`);
     return backupPath;
   }
-
-
 
   async updateProgressFile(job, encodingData) {
     // This would update the remote progress file
@@ -501,30 +578,34 @@ class QueueManager extends EventEmitter {
     // Load user config to check storage options
     let keepOriginal = false;
     let keepEncoded = false;
-    
+
     try {
-      const userConfig = await this.sftpManager.loadUserConfig();
-      keepOriginal = userConfig?.storage?.keep_original || false;
-      keepEncoded = userConfig?.storage?.keep_encoded || false;
+      // Load config from local file
+      const userConfig = await fs.readJSON("./sharkoder.config.json");
+      keepOriginal = userConfig?.advanced?.keep_original || false;
+      keepEncoded = userConfig?.advanced?.keep_encoded || false;
     } catch (error) {
-      logger.warn('Failed to load user config for cleanup, using defaults:', error);
+      logger.warn("Failed to load user config for cleanup, using defaults:", error);
     }
 
-    const downloadedPath = path.join(this.config.local_temp, 'downloaded', `${job.id}_${path.basename(job.filepath)}`);
-    const encodedPath = path.join(this.config.local_temp, 'encoded', `${job.id}_${path.basename(job.filepath)}`);
+    const downloadedPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
+    const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
     // Handle downloaded file (original)
     try {
       if (await fs.pathExists(downloadedPath)) {
         if (keepOriginal) {
-          // Move to backup instead of deleting
-          const backupPath = path.join(this.config.local_backup, 'originals', path.basename(job.filepath));
-          await fs.ensureDir(path.dirname(backupPath));
-          await fs.move(downloadedPath, backupPath, { overwrite: true });
-          logger.info(`[CLEANUP] Kept original file: ${backupPath}`);
+          // Move to backup instead of deleting (with retry for locked files)
+          const backupPath = path.join(this.config.local_backup, "originals", path.basename(job.filepath));
+          const moved = await safeFileMove(downloadedPath, backupPath);
+          if (moved) {
+            logger.info(`[CLEANUP] Kept original file: ${backupPath}`);
+          }
         } else {
-          await fs.unlink(downloadedPath);
-          logger.debug(`[CLEANUP] Removed downloaded file: ${downloadedPath}`);
+          const deleted = await safeFileDelete(downloadedPath);
+          if (deleted) {
+            logger.debug(`[CLEANUP] Removed downloaded file: ${downloadedPath}`);
+          }
         }
       }
     } catch (error) {
@@ -535,14 +616,17 @@ class QueueManager extends EventEmitter {
     try {
       if (await fs.pathExists(encodedPath)) {
         if (keepEncoded) {
-          // Keep the encoded file in a dedicated folder
-          const keepPath = path.join(this.config.local_backup, 'encoded', path.basename(job.filepath));
-          await fs.ensureDir(path.dirname(keepPath));
-          await fs.move(encodedPath, keepPath, { overwrite: true });
-          logger.info(`[CLEANUP] Kept encoded file: ${keepPath}`);
+          // Keep the encoded file in a dedicated folder (with retry for locked files)
+          const keepPath = path.join(this.config.local_backup, "encoded", path.basename(job.filepath));
+          const moved = await safeFileMove(encodedPath, keepPath);
+          if (moved) {
+            logger.info(`[CLEANUP] Kept encoded file: ${keepPath}`);
+          }
         } else {
-          await fs.unlink(encodedPath);
-          logger.debug(`[CLEANUP] Removed encoded file: ${encodedPath}`);
+          const deleted = await safeFileDelete(encodedPath);
+          if (deleted) {
+            logger.debug(`[CLEANUP] Removed encoded file: ${encodedPath}`);
+          }
         }
       }
     } catch (error) {
@@ -554,14 +638,14 @@ class QueueManager extends EventEmitter {
     // Stop encoding job
     if (this.encodingJob) {
       logger.info(`Stopping encoding job: ${this.encodingJob.id}`);
-      
+
       if (this.encoder.isCurrentlyEncoding()) {
         await this.encoder.stopEncoding();
       }
 
-      await updateJob(this.encodingJob.id, { 
-        status: 'paused',
-        error: 'Manually stopped'
+      await updateJob(this.encodingJob.id, {
+        status: "paused",
+        error: "Manually stopped",
       });
 
       this.encodingJob = null;
@@ -570,9 +654,9 @@ class QueueManager extends EventEmitter {
     // Pause all downloading jobs
     for (const [jobId, data] of this.downloadingJobs) {
       logger.info(`Pausing download job: ${jobId}`);
-      await updateJob(jobId, { 
-        status: 'paused',
-        error: 'Manually stopped'
+      await updateJob(jobId, {
+        status: "paused",
+        error: "Manually stopped",
       });
     }
     this.downloadingJobs.clear();
@@ -580,9 +664,9 @@ class QueueManager extends EventEmitter {
     // Pause all uploading jobs
     for (const [jobId, data] of this.uploadingJobs) {
       logger.info(`Pausing upload job: ${jobId}`);
-      await updateJob(jobId, { 
-        status: 'paused',
-        error: 'Manually stopped'
+      await updateJob(jobId, {
+        status: "paused",
+        error: "Manually stopped",
       });
     }
     this.uploadingJobs.clear();
@@ -590,24 +674,23 @@ class QueueManager extends EventEmitter {
 
   async resumeInterruptedJobs() {
     try {
-      // Find jobs that were in progress when app was closed
-      const interruptedStatuses = ['downloading', 'encoding', 'uploading', 'ready_encode', 'ready_upload'];
+      // Find jobs that were ACTUALLY in progress when app was closed
+      // Only reset jobs that have been started (have started_at timestamp) but not finished
+      const interruptedStatuses = ["downloading", "encoding", "uploading"];
       const allJobs = await getAllJobs();
-      
-      const interruptedJobs = allJobs.filter(job => 
-        interruptedStatuses.includes(job.status)
-      );
+
+      const interruptedJobs = allJobs.filter((job) => interruptedStatuses.includes(job.status) && job.started_at);
 
       for (const job of interruptedJobs) {
         logger.info(`Resuming interrupted job: ${job.id}`);
-        
+
         // Clean up any partial files
         await this.cleanupJobFiles(job);
-        
-        await updateJob(job.id, { 
-          status: 'waiting',
+
+        await updateJob(job.id, {
+          status: "waiting",
           progress: 0,
-          error: 'Resumed after interruption'
+          error: null,
         });
       }
 
@@ -615,7 +698,7 @@ class QueueManager extends EventEmitter {
         logger.info(`Resumed ${interruptedJobs.length} interrupted jobs`);
       }
     } catch (error) {
-      logger.error('Failed to resume interrupted jobs:', error);
+      logger.error("Failed to resume interrupted jobs:", error);
     }
   }
 
@@ -623,53 +706,53 @@ class QueueManager extends EventEmitter {
   handleDownloadProgress(jobId, progress) {
     const progressData = {
       jobId,
-      type: 'download',
+      type: "download",
       progress: progress.progress,
       speed: progress.speed || 0,
-      eta: null
+      eta: null,
     };
 
-    updateJob(jobId, { 
+    updateJob(jobId, {
       progress: progress.progress,
-      status: 'downloading'
-    }).catch(err => logger.error('Failed to update job progress:', err));
+      status: "downloading",
+    }).catch((err) => logger.error("Failed to update job progress:", err));
 
-    this.emit('progress', progressData);
+    this.emit("progress", progressData);
   }
 
   handleEncodingProgress(jobId, progress) {
     const progressData = {
       jobId,
-      type: 'encoding',
+      type: "encoding",
       progress: progress.progress,
       speed: progress.fps || 0,
-      eta: progress.eta
+      eta: progress.eta,
     };
 
-    updateJob(jobId, { 
+    updateJob(jobId, {
       progress: progress.progress,
       eta: progress.eta,
-      status: 'encoding'
-    }).catch(err => logger.error('Failed to update job progress:', err));
+      status: "encoding",
+    }).catch((err) => logger.error("Failed to update job progress:", err));
 
-    this.emit('progress', progressData);
+    this.emit("progress", progressData);
   }
 
   handleUploadProgress(jobId, progress) {
     const progressData = {
       jobId,
-      type: 'upload',
+      type: "upload",
       progress: progress.progress,
       speed: progress.speed || 0,
-      eta: null
+      eta: null,
     };
 
-    updateJob(jobId, { 
+    updateJob(jobId, {
       progress: progress.progress,
-      status: 'uploading'
-    }).catch(err => logger.error('Failed to update job progress:', err));
+      status: "uploading",
+    }).catch((err) => logger.error("Failed to update job progress:", err));
 
-    this.emit('progress', progressData);
+    this.emit("progress", progressData);
   }
 }
 

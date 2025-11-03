@@ -47,7 +47,9 @@
 
         .status-waiting { background-color: rgb(107 114 128); }
         .status-downloading { background-color: rgb(59 130 246); }
+        .status-ready_encode { background-color: rgb(96 165 250); }
         .status-encoding { background-color: rgb(234 179 8); }
+        .status-ready_upload { background-color: rgb(192 132 252); }
         .status-uploading { background-color: rgb(168 85 247); }
         .status-completed { background-color: rgb(34 197 94); }
         .status-failed { background-color: rgb(239 68 68); }
@@ -140,7 +142,9 @@
             const statusConfig = {
                 waiting: { label: 'Waiting', className: 'status-waiting' },
                 downloading: { label: 'Downloading', className: 'status-downloading' },
+                ready_encode: { label: 'Ready to Encode', className: 'status-ready_encode' },
                 encoding: { label: 'Encoding', className: 'status-encoding' },
+                ready_upload: { label: 'Ready to Upload', className: 'status-ready_upload' },
                 uploading: { label: 'Uploading', className: 'status-uploading' },
                 completed: { label: 'Completed', className: 'status-completed' },
                 failed: { label: 'Failed', className: 'status-failed' },
@@ -827,8 +831,18 @@
                             <div className="space-y-3">
                                 {[...jobs]
                                     .sort((a, b) => {
-                                        // Sort by status first (processing > waiting > paused > others)
-                                        const statusOrder = { 'encoding': 0, 'downloading': 1, 'uploading': 2, 'waiting': 3, 'paused': 4, 'completed': 5, 'failed': 6 };
+                                        // Sort by status first: encoding > downloading > ready_encode > uploading > ready_upload > waiting > paused > completed > failed
+                                        const statusOrder = { 
+                                            'encoding': 0, 
+                                            'downloading': 1, 
+                                            'ready_encode': 2,
+                                            'uploading': 3, 
+                                            'ready_upload': 4,
+                                            'waiting': 5, 
+                                            'paused': 6, 
+                                            'completed': 7, 
+                                            'failed': 8 
+                                        };
                                         const statusDiff = (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
                                         if (statusDiff !== 0) return statusDiff;
                                         

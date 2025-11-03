@@ -431,6 +431,29 @@ class SftpManager {
   }
 
   /**
+   * Delete a file from the server
+   */
+  async deleteFile(remotePath) {
+    await this.ensureConnection();
+
+    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+
+    try {
+      const exists = await this.sftp.exists(fullRemotePath);
+      if (exists) {
+        await this.sftp.delete(fullRemotePath);
+        logger.info(`Deleted SFTP file: ${fullRemotePath}`);
+        return true;
+      }
+      logger.info(`File does not exist, nothing to delete: ${fullRemotePath}`);
+      return false;
+    } catch (error) {
+      logger.error(`Could not delete SFTP file ${fullRemotePath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Restore the backup file (.original.bak) if upload failed
    */
   async restoreBackupFile(remotePath) {

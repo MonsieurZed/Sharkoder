@@ -49,6 +49,8 @@
     "log_level": "info",
     "auto_start_queue": true,
     "verify_checksums": true,
-    "create_backups": true
+    "create_backups": true,
+    "_comment_skip_hevc": "Set to true to skip re-encoding files already in HEVC/x265 format",
+    "skip_hevc_reencode": false
   }
 }

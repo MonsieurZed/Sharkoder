@@ -39,10 +39,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   toggleDevTools: () => ipcRenderer.invoke("system:toggleDevTools"),
   systemShutdown: () => ipcRenderer.invoke("system:shutdown"),
   playFile: (remotePath) => ipcRenderer.invoke("playFile", remotePath),
+  playOriginalFile: (filename) => ipcRenderer.invoke("playOriginalFile", filename),
 
   // Event listeners
   onQueueProgress: (callback) => {
     ipcRenderer.on("queue:progress", (event, data) => callback(data));
+  },
+
+  onQueueStatusChange: (callback) => {
+    ipcRenderer.on("queue:statusChange", (event, data) => callback(data));
   },
 
   onJobComplete: (callback) => {

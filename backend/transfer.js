@@ -314,6 +314,19 @@ class TransferManager {
   }
 
   /**
+   * Delete a file from the server
+   */
+  async deleteFile(remotePath) {
+    if (this.sftpManager.connected) {
+      return await this.sftpManager.deleteFile(remotePath);
+    }
+    if (this.webdavManager.connected) {
+      return await this.webdavManager.deleteFile(remotePath);
+    }
+    throw new Error("No transfer method connected");
+  }
+
+  /**
    * Restore backup file if upload failed
    */
   async restoreBackupFile(remotePath) {

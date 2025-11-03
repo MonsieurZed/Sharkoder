@@ -56,8 +56,8 @@ const createWindow = () => {
   // Load the app
   mainWindow.loadFile("renderer/index.html");
 
-  // Open DevTools to debug
-  mainWindow.webContents.openDevTools();
+  // Open DevTools to debug (disabled in production)
+  // mainWindow.webContents.openDevTools();
 
   // Log when page finishes loading
   mainWindow.webContents.on("did-finish-load", () => {
@@ -393,6 +393,26 @@ const setupIpcHandlers = () => {
     }
   });
 
+  // Play original file from local backup
+  ipcMain.handle("playOriginalFile", async (event, filename) => {
+    try {
+      const config = require("./sharkoder.config.json");
+      const originalPath = path.join(config.local_backup, "originals", filename);
+
+      // Check if original backup exists locally
+      if (await fs.pathExists(originalPath)) {
+        await shell.openPath(originalPath);
+        logger.info(`Opened original file from backup: ${originalPath}`);
+        return { success: true };
+      } else {
+        throw new Error("Original file not found in local backup");
+      }
+    } catch (error) {
+      logger.error("Failed to play original file:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // User config handlers - Local only (no SFTP sync)
   ipcMain.handle("config:loadUserConfig", async () => {
     try {
@@ -525,6 +545,12 @@ app.whenReady().then(async () => {
     queueManager.on("progress", (data) => {
       if (mainWindow) {
         mainWindow.webContents.send("queue:progress", data);
+      }
+    });
+
+    queueManager.on("statusChange", (data) => {
+      if (mainWindow) {
+        mainWindow.webContents.send("queue:statusChange", data);
       }
     });
 

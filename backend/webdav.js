@@ -396,6 +396,29 @@ class WebDAVManager {
   }
 
   /**
+   * Delete a file from the server
+   */
+  async deleteFile(remotePath) {
+    await this.ensureConnection();
+
+    const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
+
+    try {
+      const exists = await this.client.exists(fullRemotePath);
+      if (exists) {
+        await this.client.deleteFile(fullRemotePath);
+        logger.info(`Deleted WebDAV file: ${fullRemotePath}`);
+        return true;
+      }
+      logger.info(`File does not exist, nothing to delete: ${fullRemotePath}`);
+      return false;
+    } catch (error) {
+      logger.error(`Could not delete WebDAV file ${fullRemotePath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Restore the backup file (.original.bak) if upload failed
    */
   async restoreBackupFile(remotePath) {

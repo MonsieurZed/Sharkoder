@@ -41,6 +41,7 @@ class QueueManager extends EventEmitter {
     }
 
     this.isRunning = true;
+    this.emit("statusChange", { isRunning: true, isPaused: false });
     logger.info("Queue manager started");
 
     // Check for ghost files from previous crash
@@ -63,6 +64,7 @@ class QueueManager extends EventEmitter {
 
     this.isRunning = false;
     this.isPaused = true;
+    this.emit("statusChange", { isRunning: false, isPaused: true });
 
     logger.info("Stopping queue manager and resetting jobs...");
 
@@ -95,6 +97,34 @@ class QueueManager extends EventEmitter {
     this.uploadingJobs.clear();
 
     logger.info("Queue manager stopped - All jobs reset to waiting");
+  }
+
+  // Generate new filename with encoding parameters
+  generateEncodedFilename(originalPath, codecAfter) {
+    const parsedPath = path.parse(originalPath);
+    const baseName = parsedPath.name;
+    const ext = parsedPath.ext;
+
+    // Remove old codec tags (x264, x265, h264, h265, hevc, etc.)
+    let cleanName = baseName
+      .replace(/\[.*?(x264|x265|h264|h265|hevc|H\.264|H\.265|HEVC).*?\]/gi, "")
+      .replace(/\b(x264|x265|h264|h265|hevc|H\.264|H\.265|HEVC)\b/gi, "")
+      .trim();
+
+    // Get encoding parameters
+    const isGPU = codecAfter.includes("nvenc") || codecAfter.includes("_nvenc");
+    const codecTag = isGPU ? "hevc_nvenc" : "x265";
+    
+    // Get quality setting
+    const cq = this.config.ffmpeg?.cq || this.config.cq || 24;
+    const preset = isGPU ? (this.config.ffmpeg?.encode_preset || this.config.encode_preset || "p7") : (this.config.ffmpeg?.cpu_preset || this.config.cpu_preset || "medium");
+
+    // Build new filename with encoding info
+    const encodingInfo = isGPU ? `[${codecTag}-${preset}-cq${cq}]` : `[${codecTag}-${preset}-crf${cq}]`;
+    
+    const newName = `${cleanName} ${encodingInfo}${ext}`;
+    
+    return path.join(parsedPath.dir, newName);
   }
 
   pause() {
@@ -406,9 +436,11 @@ class QueueManager extends EventEmitter {
         logger.info(`[ENCODE] Detected codec: ${codecBefore}`);
         await updateJob(job.id, { codec_before: codecBefore });
 
-        // Check if already encoded in HEVC/H.265
-        if (codecBefore === "hevc" || codecBefore === "h265" || codecBefore.includes("265")) {
-          logger.info(`[ENCODE] Job ${job.id} already in HEVC/H.265 format (codec: ${codecBefore}), skipping encoding`);
+        // Check if already encoded in HEVC/H.265 and if we should skip re-encoding
+        const skipHevcReencode = this.config.advanced?.skip_hevc_reencode || false;
+
+        if (skipHevcReencode && (codecBefore === "hevc" || codecBefore === "h265" || codecBefore.includes("265"))) {
+          logger.info(`[ENCODE] Job ${job.id} already in HEVC/H.265 format (codec: ${codecBefore}), skipping encoding (skip_hevc_reencode=true)`);
 
           // Copy file instead of re-encoding
           const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
@@ -513,20 +545,37 @@ class QueueManager extends EventEmitter {
       logger.info(`[UPLOAD] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "uploading" });
 
+      // Generate new filename with encoding parameters
+      const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
+      const newFilePath = this.generateEncodedFilename(job.filepath, codecAfter);
+      
+      logger.info(`[UPLOAD] Original: ${job.filepath}`);
+      logger.info(`[UPLOAD] New name: ${newFilePath}`);
+
       // Start upload asynchronously
       const uploadPromise = this.transferManager
-        .uploadFile(encodedPath, job.filepath, (progress) => {
+        .uploadFile(encodedPath, newFilePath, (progress) => {
           this.handleUploadProgress(job.id, progress);
         })
         .then(async () => {
           logger.info(`[UPLOAD] Completed job ${job.id}`);
           this.uploadingJobs.delete(job.id);
 
-          // Delete the backup file (.original.bak) on success
+          // Delete the original file's backup (.original.bak) on success
           try {
             await this.transferManager.deleteBackupFile(job.filepath);
           } catch (error) {
             logger.warn(`Could not delete backup file:`, error);
+          }
+
+          // If we renamed the file, also delete the old file (original name) from server
+          if (newFilePath !== job.filepath) {
+            try {
+              logger.info(`[UPLOAD] Deleting original file after rename: ${job.filepath}`);
+              await this.transferManager.deleteFile(job.filepath);
+            } catch (error) {
+              logger.warn(`Could not delete original file after rename:`, error);
+            }
           }
 
           // Mark job as completed with actual codec used
@@ -726,7 +775,10 @@ class QueueManager extends EventEmitter {
       type: "download",
       progress: progress.progress,
       speed: progress.speed || 0,
-      eta: null,
+      eta: progress.eta || null,
+      downloaded: progress.downloaded,
+      total: progress.total,
+      elapsedTime: progress.elapsedTime,
     };
 
     // Throttle database updates to avoid SQLITE_BUSY errors
@@ -779,7 +831,10 @@ class QueueManager extends EventEmitter {
       type: "upload",
       progress: progress.progress,
       speed: progress.speed || 0,
-      eta: null,
+      eta: progress.eta || null,
+      uploaded: progress.uploaded,
+      total: progress.total,
+      elapsedTime: progress.elapsedTime,
     };
 
     // Throttle database updates to avoid SQLITE_BUSY errors

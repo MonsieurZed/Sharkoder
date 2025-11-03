@@ -1313,9 +1313,9 @@
                                       ▶️ Compressé
                                     </button>
                                     <button
-                                      onClick={() => window.electronAPI.playFile(job.filepath + ".original.bak")}
+                                      onClick={() => window.electronAPI.playOriginalFile(job.filepath.split("/").pop())}
                                       className="bg-gray-600 hover:bg-gray-700 text-white px-3 py-1.5 rounded text-sm transition-colors"
-                                      title="Lire le fichier original"
+                                      title="Lire le fichier original depuis le backup local"
                                     >
                                       ▶️ Original
                                     </button>
@@ -1324,12 +1324,8 @@
 
                                 {/* Failed or ready jobs - Retry button */}
                                 {/* Only show retry for failed jobs if they at least started downloading (have started_at) */}
-                                {/* Always show for ready_encode, ready_upload, waiting, paused states */}
-                                {((job.status === "failed" && job.started_at) ||
-                                  job.status === "ready_encode" ||
-                                  job.status === "ready_upload" ||
-                                  job.status === "waiting" ||
-                                  job.status === "paused") && (
+                                {/* Show for ready_encode, ready_upload, paused states (but NOT waiting) */}
+                                {((job.status === "failed" && job.started_at) || job.status === "ready_encode" || job.status === "ready_upload" || job.status === "paused") && (
                                   <button onClick={() => onRetryJob(job.id)} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm transition-colors" title="Réessayer">
                                     🔄 Réessayer
                                   </button>
@@ -1987,6 +1983,17 @@
                           <span className="text-sm text-gray-300">Create backups on server before replacing</span>
                         </label>
                         <p className="text-xs text-gray-400 ml-6">Original file on server will be renamed with .bak extension</p>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.skip_hevc_reencode || false}
+                            onChange={(e) => updateConfig("advanced.skip_hevc_reencode", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">Skip re-encoding HEVC/x265 files</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Files already in HEVC format will be copied without re-encoding (faster but no size reduction)</p>
                       </div>
                     </div>
 
@@ -2250,6 +2257,15 @@
             }));
           });
 
+          window.electronAPI.onQueueStatusChange((data) => {
+            console.log("Queue status changed:", data);
+            setQueueStatus((prev) => ({
+              ...prev,
+              isRunning: data.isRunning,
+              isPaused: data.isPaused,
+            }));
+          });
+
           window.electronAPI.onJobUpdate(async (data) => {
             console.log("Job update received:", data);
             if (data.status === "failed") {
@@ -2303,12 +2319,17 @@
           // Poll queue status every 5 seconds
           const statusInterval = setInterval(loadQueueStatus, 5000);
 
+          // Poll job list every 2 seconds to see status updates
+          const jobsInterval = setInterval(loadJobs, 2000);
+
           return () => {
             window.electronAPI.removeAllListeners("queue:progress");
+            window.electronAPI.removeAllListeners("queue:statusChange");
             window.electronAPI.removeAllListeners("queue:jobComplete");
             window.electronAPI.removeAllListeners("queue:jobUpdate");
             window.electronAPI.removeAllListeners("queue:error");
             clearInterval(statusInterval);
+            clearInterval(jobsInterval);
           };
         }, []);
 

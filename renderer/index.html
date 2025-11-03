@@ -1,0 +1,1802 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sharkoder - GPU Video Encoder</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3a8a 0%, #3730a3 50%, #5b21b6 100%);
+            color: #f8fafc;
+            overflow: hidden;
+        }
+        
+        .bg-glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .scrollbar-thin {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+        }
+        
+        .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.5);
+        }
+
+        .status-waiting { background-color: rgb(107 114 128); }
+        .status-downloading { background-color: rgb(59 130 246); }
+        .status-encoding { background-color: rgb(234 179 8); }
+        .status-uploading { background-color: rgb(168 85 247); }
+        .status-completed { background-color: rgb(34 197 94); }
+        .status-failed { background-color: rgb(239 68 68); }
+        .status-paused { background-color: rgb(249 115 22); }
+
+        .glow-effect {
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.5);
+        }
+
+        .btn-primary {
+            background-color: rgb(37 99 235);
+            color: white;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            transition: background-color 0.2s;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-primary:hover {
+            background-color: rgb(29 78 216);
+        }
+
+        .btn-secondary {
+            background-color: rgb(75 85 99);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-secondary:hover {
+            background-color: rgb(55 65 81);
+        }
+
+        .btn-danger {
+            background-color: rgb(220 38 38);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-danger:hover {
+            background-color: rgb(185 28 28);
+        }
+
+        .btn-success {
+            background-color: rgb(22 163 74);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-success:hover {
+            background-color: rgb(21 128 61);
+        }
+
+        .btn-warning {
+            background-color: rgb(234 179 8);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem;
+            transition: background-color 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-warning:hover {
+            background-color: rgb(202 138 4);
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback } = React;
+
+        // Status Badge Component
+        const StatusBadge = ({ status }) => {
+            const statusConfig = {
+                waiting: { label: 'Waiting', className: 'status-waiting' },
+                downloading: { label: 'Downloading', className: 'status-downloading' },
+                encoding: { label: 'Encoding', className: 'status-encoding' },
+                uploading: { label: 'Uploading', className: 'status-uploading' },
+                completed: { label: 'Completed', className: 'status-completed' },
+                failed: { label: 'Failed', className: 'status-failed' },
+                paused: { label: 'Paused', className: 'status-paused' }
+            };
+
+            const config = statusConfig[status] || statusConfig.waiting;
+
+            return (
+                <span className={`px-2 py-1 rounded-full text-xs font-medium text-white ${config.className}`}>
+                    {config.label}
+                </span>
+            );
+        };
+
+        // Progress Bar Component
+        const ProgressBar = ({ progress, type, eta, fps, speed, elapsedTime, currentTime, totalDuration }) => {
+            const getBarColor = () => {
+                switch (type) {
+                    case 'download': return 'bg-blue-500';
+                    case 'encoding': return 'bg-yellow-500';
+                    case 'upload': return 'bg-purple-500';
+                    default: return 'bg-gray-500';
+                }
+            };
+
+            const formatETA = (seconds) => {
+                if (!seconds || seconds <= 0) return '';
+                
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                const secs = Math.floor(seconds % 60);
+                
+                if (hours > 0) {
+                    return `${hours}h ${minutes}m`;
+                } else if (minutes > 0) {
+                    return `${minutes}m ${secs}s`;
+                } else {
+                    return `${secs}s`;
+                }
+            };
+
+            const formatTime = (seconds) => {
+                if (!seconds) return '00:00:00';
+                const h = Math.floor(seconds / 3600);
+                const m = Math.floor((seconds % 3600) / 60);
+                const s = Math.floor(seconds % 60);
+                return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            };
+
+            return (
+                <div className="w-full">
+                    <div className="flex justify-between text-xs mb-1">
+                        <div className="flex items-center space-x-3">
+                            <span className="font-medium">{Math.round(progress)}%</span>
+                            {type === 'encoding' && currentTime && totalDuration && (
+                                <span className="text-gray-400">
+                                    {formatTime(currentTime)} / {formatTime(totalDuration)}
+                                </span>
+                            )}
+                            {fps && fps > 0 && (
+                                <span className="text-blue-400">
+                                    🎬 {Math.round(fps)} FPS
+                                </span>
+                            )}
+                            {speed && speed > 0 && (
+                                <span className="text-purple-400">
+                                    ⚡ {(speed / 1000).toFixed(1)} MB/s
+                                </span>
+                            )}
+                        </div>
+                        <div className="flex items-center space-x-3">
+                            {elapsedTime && (
+                                <span className="text-gray-400">
+                                    ⏱️ {formatETA(elapsedTime)}
+                                </span>
+                            )}
+                            {eta && (
+                                <span className="text-green-400 font-medium">
+                                    ETA: {formatETA(eta)}
+                                </span>
+                            )}
+                        </div>
+                    </div>
+                    <div className="w-full bg-gray-700 rounded-full h-2">
+                        <div 
+                            className={`${getBarColor()} h-2 rounded-full transition-all duration-300`}
+                            style={{ width: `${Math.min(progress, 100)}%` }}
+                        ></div>
+                    </div>
+                </div>
+            );
+        };
+
+        // File Tree Component
+        const FileTree = ({ onAddToQueue, encodedFiles }) => {
+            const [currentPath, setCurrentPath] = useState('');
+            const [files, setFiles] = useState([]);
+            const [loading, setLoading] = useState(false);
+            const [connected, setConnected] = useState(false);
+            const [sortBy, setSortBy] = useState('alpha'); // 'alpha' or 'size'
+            const [searchTerm, setSearchTerm] = useState('');
+            const [calculatingSize, setCalculatingSize] = useState({}); // Track folders being calculated
+
+            const loadFiles = useCallback(async (path = '') => {
+                setLoading(true);
+                try {
+                    const result = await window.electronAPI.sftpListFiles(path);
+                    if (result.success) {
+                        setFiles(result.files);
+                    } else {
+                        console.error('Failed to load files:', result.error);
+                    }
+                } catch (error) {
+                    console.error('Error loading files:', error);
+                } finally {
+                    setLoading(false);
+                }
+            }, []);
+
+            const connectToServer = async () => {
+                try {
+                    const result = await window.electronAPI.sftpConnect();
+                    if (result.success) {
+                        setConnected(true);
+                        await loadFiles();
+                    } else {
+                        alert('Failed to connect: ' + result.error);
+                    }
+                } catch (error) {
+                    alert('Connection error: ' + error.message);
+                }
+            };
+
+            const navigateToFolder = (folderPath) => {
+                setCurrentPath(folderPath);
+                loadFiles(folderPath);
+            };
+
+            const goBack = () => {
+                const parentPath = currentPath.split('/').slice(0, -1).join('/');
+                navigateToFolder(parentPath);
+            };
+
+            const addToQueue = (file) => {
+                onAddToQueue(file.path, file);
+            };
+
+            const addFolderToQueue = async (folderPath) => {
+                try {
+                    setLoading(true);
+                    const result = await window.electronAPI.sftpScanFolder(folderPath);
+                    
+                    if (result.success && result.files.length > 0) {
+                        let addedCount = 0;
+                        for (const file of result.files) {
+                            if (!isEncoded(file.path)) {
+                                await onAddToQueue(file.path, file);
+                                addedCount++;
+                            }
+                        }
+                        alert(`Added ${addedCount} files to queue from folder`);
+                    } else if (result.success && result.files.length === 0) {
+                        alert('No video files found in this folder');
+                    } else {
+                        alert('Failed to scan folder: ' + result.error);
+                    }
+                } catch (error) {
+                    alert('Error scanning folder: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const calculateFolderSize = async (folderPath) => {
+                try {
+                    // Mark as calculating
+                    setCalculatingSize(prev => ({ ...prev, [folderPath]: true }));
+                    
+                    const result = await window.electronAPI.sftpGetDirectorySize(folderPath);
+                    
+                    if (result.success) {
+                        // Update the file in the list with the new size, fileCount and avgSize
+                        setFiles(prevFiles => prevFiles.map(file => {
+                            if (file.path === folderPath && file.type === 'directory') {
+                                return {
+                                    ...file,
+                                    size: result.size,
+                                    fileCount: result.fileCount,
+                                    avgSize: result.avgSize,
+                                    sizeFormatted: formatSize(result.size),
+                                    cached: true
+                                };
+                            }
+                            return file;
+                        }));
+                    } else {
+                        console.error('Failed to calculate folder size:', result.error);
+                    }
+                } catch (error) {
+                    console.error('Error calculating folder size:', error);
+                } finally {
+                    // Remove from calculating state
+                    setCalculatingSize(prev => {
+                        const newState = { ...prev };
+                        delete newState[folderPath];
+                        return newState;
+                    });
+                }
+            };
+
+            const shouldShowAddFolderButton = (folderName, filesList) => {
+                // Show button if folder name contains "Season"
+                if (folderName.toLowerCase().includes('season')) {
+                    return true;
+                }
+                
+                // Show button if folder contains video files
+                const hasVideoFiles = filesList.some(f => f.type === 'file');
+                if (hasVideoFiles) {
+                    return true;
+                }
+                
+                return false;
+            };
+
+            const shouldShowAddSeriesButton = (folderName, filesList) => {
+                // Ne pas montrer le bouton si c'est déjà un dossier Season
+                if (folderName.toLowerCase().includes('season')) {
+                    return false;
+                }
+                
+                // Show button if folder contains multiple "Season" subfolders
+                const seasonFolders = filesList.filter(f => 
+                    f.type === 'directory' && f.name.toLowerCase().includes('season')
+                );
+                
+                return seasonFolders.length >= 2; // Au moins 2 saisons
+            };
+
+            const addSeriesToQueue = async (seriesPath) => {
+                try {
+                    setLoading(true);
+                    
+                    // Scanner tous les sous-dossiers Season du dossier actuel
+                    const seasonFolders = files.filter(f => 
+                        f.type === 'directory' && f.name.toLowerCase().includes('season')
+                    );
+                    
+                    if (seasonFolders.length === 0) {
+                        alert('No season folders found in this directory');
+                        return;
+                    }
+                    
+                    let totalAdded = 0;
+                    let totalSeasons = 0;
+                    
+                    for (const seasonFolder of seasonFolders) {
+                        const result = await window.electronAPI.sftpScanFolder(seasonFolder.path);
+                        
+                        if (result.success && result.files.length > 0) {
+                            totalSeasons++;
+                            for (const file of result.files) {
+                                if (!isEncoded(file.path)) {
+                                    await addToQueue({ path: file.path, ...file });
+                                    totalAdded++;
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (totalAdded > 0) {
+                        alert(`✅ Added ${totalAdded} episodes from ${totalSeasons} seasons to queue!`);
+                    } else {
+                        alert('No new episodes to add (all already encoded)');
+                    }
+                } catch (error) {
+                    alert('Error adding series: ' + error.message);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const isEncoded = (filePath) => {
+                return encodedFiles.some(encoded => encoded.path === filePath);
+            };
+
+            const formatSize = (bytes) => {
+                if (!bytes || bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            };
+
+            const sortFiles = (filesList) => {
+                const sorted = [...filesList];
+                
+                if (sortBy === 'size') {
+                    sorted.sort((a, b) => {
+                        // Directories first
+                        if (a.type !== b.type) {
+                            return a.type === 'directory' ? -1 : 1;
+                        }
+                        // Then by size (largest first)
+                        return b.size - a.size;
+                    });
+                } else if (sortBy === 'fileCount') {
+                    sorted.sort((a, b) => {
+                        // Only sort directories, files stay below
+                        if (a.type !== b.type) {
+                            return a.type === 'directory' ? -1 : 1;
+                        }
+                        if (a.type === 'directory') {
+                            // Sort by file count (most files first)
+                            return (b.fileCount || 0) - (a.fileCount || 0);
+                        }
+                        return a.name.localeCompare(b.name);
+                    });
+                } else if (sortBy === 'avgSize') {
+                    sorted.sort((a, b) => {
+                        // Only sort directories, files stay below
+                        if (a.type !== b.type) {
+                            return a.type === 'directory' ? -1 : 1;
+                        }
+                        if (a.type === 'directory') {
+                            // Sort by average size per file (largest first)
+                            return (b.avgSize || 0) - (a.avgSize || 0);
+                        }
+                        return a.name.localeCompare(b.name);
+                    });
+                } else {
+                    // Alpha sort
+                    sorted.sort((a, b) => {
+                        // Directories first
+                        if (a.type !== b.type) {
+                            return a.type === 'directory' ? -1 : 1;
+                        }
+                        // Then alphabetically
+                        return a.name.localeCompare(b.name);
+                    });
+                }
+                
+                return sorted;
+            };
+
+            const filterFiles = (filesList) => {
+                if (!searchTerm) return filesList;
+                
+                const term = searchTerm.toLowerCase();
+                return filesList.filter(file => 
+                    file.name.toLowerCase().includes(term)
+                );
+            };
+
+            const getDisplayFiles = () => {
+                let displayFiles = files;
+                displayFiles = filterFiles(displayFiles);
+                displayFiles = sortFiles(displayFiles);
+                return displayFiles;
+            };
+
+            return (
+                <div className="bg-glass rounded-lg p-4 h-full flex flex-col">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-bold">Remote Files</h2>
+                        {!connected ? (
+                            <button onClick={connectToServer} className="btn-primary">
+                                Connect
+                            </button>
+                        ) : (
+                            <div className="flex items-center space-x-2">
+                                <span className="text-green-400">●</span>
+                                <span className="text-sm">Connected</span>
+                            </div>
+                        )}
+                    </div>
+
+                    {connected && (
+                        <>
+                            {/* Search and Sort Controls */}
+                            <div className="mb-4 space-y-2">
+                                {/* Search Bar */}
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        placeholder="🔍 Search files and folders..."
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none"
+                                    />
+                                    {searchTerm && (
+                                        <button
+                                            onClick={() => setSearchTerm('')}
+                                            className="absolute right-2 top-2 text-gray-400 hover:text-white"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                                
+                                {/* Sort Controls */}
+                                <div className="flex items-center space-x-2">
+                                    <span className="text-sm text-gray-400">Sort by:</span>
+                                    <button
+                                        onClick={() => setSortBy('alpha')}
+                                        className={`px-3 py-1 rounded text-sm ${
+                                            sortBy === 'alpha' 
+                                                ? 'bg-blue-600 text-white' 
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                        }`}
+                                    >
+                                        🔤 Name
+                                    </button>
+                                    <button
+                                        onClick={() => setSortBy('size')}
+                                        className={`px-3 py-1 rounded text-sm ${
+                                            sortBy === 'size' 
+                                                ? 'bg-blue-600 text-white' 
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                        }`}
+                                    >
+                                        📊 Size
+                                    </button>
+                                    <button
+                                        onClick={() => setSortBy('fileCount')}
+                                        className={`px-3 py-1 rounded text-sm ${
+                                            sortBy === 'fileCount' 
+                                                ? 'bg-blue-600 text-white' 
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                        }`}
+                                    >
+                                        📁 Files
+                                    </button>
+                                    <button
+                                        onClick={() => setSortBy('avgSize')}
+                                        className={`px-3 py-1 rounded text-sm ${
+                                            sortBy === 'avgSize' 
+                                                ? 'bg-blue-600 text-white' 
+                                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                                        }`}
+                                    >
+                                        ⚖️ Avg/File
+                                    </button>
+                                    <span className="text-xs text-gray-500">
+                                        ({getDisplayFiles().length} items)
+                                    </span>
+                                </div>
+                            </div>
+
+                            {/* Navigation */}
+                            <div className="flex items-center space-x-2 mb-4">
+                                {currentPath && (
+                                    <button onClick={goBack} className="btn-secondary">
+                                        ← Back
+                                    </button>
+                                )}
+                                <span className="text-sm text-gray-300">
+                                    /{currentPath || 'library'}
+                                </span>
+                            </div>
+
+                            {/* File List */}
+                            <div className="flex-1 overflow-y-auto scrollbar-thin">
+                                {loading ? (
+                                    <div className="flex items-center justify-center h-32">
+                                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        {getDisplayFiles().map((file, index) => (
+                                            <div key={index} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors">
+                                                <div className="flex items-center space-x-3 flex-1">
+                                                    <span className="text-lg">
+                                                        {file.type === 'directory' ? '📁' : '🎬'}
+                                                    </span>
+                                                    <div className="flex-1">
+                                                        <div className="font-medium">{file.name}</div>
+                                                        <div className="text-sm text-gray-400">
+                                                            {file.type === 'directory' ? (
+                                                                <>
+                                                                    {file.size > 0 ? (
+                                                                        <div className="flex items-center space-x-3">
+                                                                            <span>📦 {formatSize(file.size)}</span>
+                                                                            {file.fileCount > 0 && (
+                                                                                <span>📁 {file.fileCount} files</span>
+                                                                            )}
+                                                                            {file.avgSize > 0 && (
+                                                                                <span className="text-xs">⚖️ {formatSize(file.avgSize)}/file</span>
+                                                                            )}
+                                                                        </div>
+                                                                    ) : (
+                                                                        <span>📂 Folder</span>
+                                                                    )}
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    {formatSize(file.size)}
+                                                                    {isEncoded(file.path) && (
+                                                                        <span className="ml-2 text-green-400">✅ Encoded</span>
+                                                                    )}
+                                                                </>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div className="flex space-x-2">
+                                                    {file.type === 'directory' ? (
+                                                        <>
+                                                            <button 
+                                                                onClick={() => navigateToFolder(file.path)}
+                                                                className="btn-secondary"
+                                                            >
+                                                                Open
+                                                            </button>
+                                                            {!file.cached && !calculatingSize[file.path] && (
+                                                                <button 
+                                                                    onClick={() => calculateFolderSize(file.path)}
+                                                                    className="btn-secondary text-xs"
+                                                                    title="Calculate folder size"
+                                                                >
+                                                                    📊 Size
+                                                                </button>
+                                                            )}
+                                                            {calculatingSize[file.path] && (
+                                                                <span className="text-xs text-blue-400 flex items-center">
+                                                                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-400 mr-1"></div>
+                                                                    Calculating...
+                                                                </span>
+                                                            )}
+                                                            {file.cached && (
+                                                                <button 
+                                                                    onClick={() => calculateFolderSize(file.path)}
+                                                                    className="btn-secondary text-xs"
+                                                                    title="Refresh folder size"
+                                                                >
+                                                                    🔄
+                                                                </button>
+                                                            )}
+                                                            {shouldShowAddFolderButton(file.name, files) && (
+                                                                <button 
+                                                                    onClick={() => addFolderToQueue(file.path)}
+                                                                    className="btn-success"
+                                                                    title="Add all videos in this folder to queue"
+                                                                >
+                                                                    📋 Add Folder
+                                                                </button>
+                                                            )}
+                                                            {shouldShowAddSeriesButton(file.name, files) && (
+                                                                <button 
+                                                                    onClick={() => addSeriesToQueue(file.path)}
+                                                                    className="btn-success"
+                                                                    title="Add all seasons of this series to queue"
+                                                                >
+                                                                    📺 Add Series
+                                                                </button>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        <button 
+                                                            onClick={() => addToQueue(file)}
+                                                            disabled={isEncoded(file.path)}
+                                                            className={isEncoded(file.path) ? 'btn-secondary opacity-50 cursor-not-allowed' : 'btn-success'}
+                                                        >
+                                                            {isEncoded(file.path) ? 'Encoded' : 'Add to Queue'}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </>
+                    )}
+                </div>
+            );
+        };
+
+        // Queue Table Component
+        const QueueTable = ({ jobs, onRemoveJob, onPauseJob, onResumeJob, onRetryJob, progressData, toggleQueueProcessing, queueStatus }) => {
+            const formatSize = (bytes) => {
+                if (!bytes || bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            };
+
+            const getJobProgress = (jobId) => {
+                return progressData[jobId] || { progress: 0, type: null, eta: null };
+            };
+
+            const formatDuration = (seconds) => {
+                if (!seconds) return '';
+                const hours = Math.floor(seconds / 3600);
+                const minutes = Math.floor((seconds % 3600) / 60);
+                if (hours > 0) {
+                    return `${hours}h ${minutes}m`;
+                } else {
+                    return `${minutes}m`;
+                }
+            };
+
+            return (
+                <div className="bg-glass rounded-lg p-4 h-full flex flex-col">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-bold">Encoding Queue</h2>
+                        <div className="flex items-center space-x-3">
+                            {!queueStatus.isRunning ? (
+                                <button
+                                    onClick={toggleQueueProcessing}
+                                    className="btn-success"
+                                    disabled={queueStatus.loading || jobs.length === 0}
+                                >
+                                    {queueStatus.loading ? '...' : '▶️ Start'}
+                                </button>
+                            ) : (
+                                <>
+                                    <button
+                                        onClick={async () => {
+                                            try {
+                                                if (queueStatus.isPaused) {
+                                                    const result = await window.electronAPI.queueResume();
+                                                    if (result.success) {
+                                                        await loadQueueStatus();
+                                                    }
+                                                } else {
+                                                    const result = await window.electronAPI.queuePause();
+                                                    if (result.success) {
+                                                        await loadQueueStatus();
+                                                    }
+                                                }
+                                            } catch (error) {
+                                                console.error('Failed to toggle pause:', error);
+                                            }
+                                        }}
+                                        className={queueStatus.isPaused ? 'btn-warning' : 'btn-secondary'}
+                                        disabled={queueStatus.loading}
+                                    >
+                                        {queueStatus.isPaused ? '▶️ Resume' : '⏸️ Pause'}
+                                    </button>
+                                    <button
+                                        onClick={toggleQueueProcessing}
+                                        className="btn-danger"
+                                        disabled={queueStatus.loading}
+                                    >
+                                        {queueStatus.loading ? '...' : '⏹️ Stop'}
+                                    </button>
+                                </>
+                            )}
+                            <span className="text-sm text-gray-300">
+                                {jobs.length} jobs
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* Queue Status Indicator */}
+                    {queueStatus.isRunning && queueStatus.currentJob && (
+                        <div className="mb-3 p-3 bg-blue-900 bg-opacity-50 rounded-lg">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center">
+                                    <div className={`rounded-full h-2 w-2 mr-2 ${queueStatus.isPaused ? 'bg-yellow-400' : 'animate-pulse bg-blue-400'}`}></div>
+                                    <span className="text-sm text-blue-300">
+                                        {queueStatus.isPaused ? '⏸️ Paused: ' : '🎬 Encoding: '}
+                                        {queueStatus.currentJob.filepath?.split('/').pop() || 'Processing...'}
+                                    </span>
+                                </div>
+                                {queueStatus.currentJob.started_at && (
+                                    <span className="text-xs text-blue-400">
+                                        Started: {new Date(queueStatus.currentJob.started_at).toLocaleTimeString()}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="flex-1 overflow-y-auto scrollbar-thin">
+                        {jobs.length === 0 ? (
+                            <div className="flex items-center justify-center h-32 text-gray-400">
+                                No jobs in queue
+                            </div>
+                        ) : (
+                            <div className="space-y-3">
+                                {[...jobs]
+                                    .sort((a, b) => {
+                                        // Sort by status first (processing > waiting > paused > others)
+                                        const statusOrder = { 'encoding': 0, 'downloading': 1, 'uploading': 2, 'waiting': 3, 'paused': 4, 'completed': 5, 'failed': 6 };
+                                        const statusDiff = (statusOrder[a.status] || 99) - (statusOrder[b.status] || 99);
+                                        if (statusDiff !== 0) return statusDiff;
+                                        
+                                        // Then sort alphabetically by filename
+                                        const nameA = a.filepath.split('/').pop().toLowerCase();
+                                        const nameB = b.filepath.split('/').pop().toLowerCase();
+                                        return nameA.localeCompare(nameB);
+                                    })
+                                    .map((job) => {
+                                    const progress = getJobProgress(job.id);
+                                    return (
+                                        <div key={job.id} className="bg-gray-800 rounded-lg p-4">
+                                            <div className="flex items-start justify-between mb-3">
+                                                <div className="flex-1">
+                                                    <div className="font-medium text-white mb-1">
+                                                        {job.filepath.split('/').pop()}
+                                                    </div>
+                                                    <div className="text-sm text-gray-400 mb-2">
+                                                        {job.filepath}
+                                                    </div>
+                                                    <div className="flex items-center space-x-4 text-sm text-gray-300">
+                                                        <span>Size: {formatSize(job.size)}</span>
+                                                        {job.codec_before && (
+                                                            <span>Codec: {job.codec_before}</span>
+                                                        )}
+                                                        {job.started_at && (
+                                                            <span>Started: {new Date(job.started_at).toLocaleTimeString()}</span>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center space-x-2">
+                                                    <StatusBadge status={job.status} />
+                                                    <div className="flex space-x-1">
+                                                        {job.status === 'waiting' || job.status === 'paused' ? (
+                                                            <button 
+                                                                onClick={() => onResumeJob(job.id)}
+                                                                className="btn-success text-xs"
+                                                            >
+                                                                ▶️
+                                                            </button>
+                                                        ) : (
+                                                            <button 
+                                                                onClick={() => onPauseJob(job.id)}
+                                                                className="btn-secondary text-xs"
+                                                            >
+                                                                ⏸️
+                                                            </button>
+                                                        )}
+                                                        {job.status === 'failed' && (
+                                                            <button 
+                                                                onClick={() => onRetryJob(job.id)}
+                                                                className="btn-success text-xs"
+                                                            >
+                                                                🔄
+                                                            </button>
+                                                        )}
+                                                        <button 
+                                                            onClick={() => onRemoveJob(job.id)}
+                                                            className="btn-danger text-xs"
+                                                        >
+                                                            🗑️
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Progress Bar */}
+                                            {(job.status === 'downloading' || job.status === 'encoding' || job.status === 'uploading') && (
+                                                <div className="mb-2">
+                                                    <ProgressBar 
+                                                        progress={progress.progress || job.progress || 0}
+                                                        type={progress.type}
+                                                        eta={progress.eta}
+                                                        fps={progress.fps}
+                                                        speed={progress.speed}
+                                                        elapsedTime={progress.elapsedTime}
+                                                        currentTime={progress.currentTime}
+                                                        totalDuration={progress.totalDuration}
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {/* Error Message */}
+                                            {job.error && (
+                                                <div className="mt-2 p-2 bg-red-900 rounded text-red-200 text-sm">
+                                                    {job.error}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        // Status Bar Component
+        const StatusBar = ({ stats, isConnected }) => {
+            return (
+                <div className="bg-gray-900 px-4 py-2 flex items-center justify-between text-sm">
+                    <div className="flex items-center space-x-6">
+                        <div className="flex items-center space-x-2">
+                            <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                            <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
+                        </div>
+                        <span>Queue: {stats.waiting || 0} waiting, {stats.processing || 0} processing</span>
+                        <span>Completed: {stats.completed || 0}</span>
+                        {stats.failed > 0 && (
+                            <span className="text-red-400">Failed: {stats.failed}</span>
+                        )}
+                    </div>
+                    <div className="text-gray-400">
+                        Sharkoder v1.0.0
+                    </div>
+                </div>
+            );
+        };
+
+        // Settings Component
+        const SettingsPanel = ({ userConfig, onSave, onClose }) => {
+            const [config, setConfig] = useState(userConfig || {});
+            const [activeTab, setActiveTab] = useState('ffmpeg');
+
+            const updateConfig = (path, value) => {
+                const newConfig = { ...config };
+                const keys = path.split('.');
+                let current = newConfig;
+                for (let i = 0; i < keys.length - 1; i++) {
+                    current = current[keys[i]];
+                }
+                current[keys[keys.length - 1]] = value;
+                setConfig(newConfig);
+            };
+
+            const handleSave = () => {
+                onSave(config);
+                onClose();
+            };
+
+            if (!config.ffmpeg) return null;
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                    <div className="bg-gray-800 rounded-lg w-2/3 max-h-[80vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+                            <h2 className="text-xl font-bold">⚙️ Settings</h2>
+                            <button onClick={onClose} className="text-gray-400 hover:text-white">✕</button>
+                        </div>
+
+                        {/* Tabs */}
+                        <div className="flex border-b border-gray-700 overflow-x-auto">
+                            <button
+                                onClick={() => setActiveTab('ffmpeg')}
+                                className={`px-6 py-3 whitespace-nowrap ${activeTab === 'ffmpeg' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400'}`}
+                            >
+                                🎬 FFmpeg
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('paths')}
+                                className={`px-6 py-3 whitespace-nowrap ${activeTab === 'paths' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400'}`}
+                            >
+                                📁 Paths
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('storage')}
+                                className={`px-6 py-3 whitespace-nowrap ${activeTab === 'storage' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400'}`}
+                            >
+                                💾 Storage
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('advanced')}
+                                className={`px-6 py-3 whitespace-nowrap ${activeTab === 'advanced' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400'}`}
+                            >
+                                ⚙️ Advanced
+                            </button>
+                            <button
+                                onClick={() => setActiveTab('ui')}
+                                className={`px-6 py-3 whitespace-nowrap ${activeTab === 'ui' ? 'border-b-2 border-blue-500 text-blue-500' : 'text-gray-400'}`}
+                            >
+                                🎨 UI
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                            {activeTab === 'ffmpeg' && (
+                                <>
+                                    {/* GPU Settings */}
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-semibold text-white">GPU Settings (NVENC)</h3>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Encode Preset</label>
+                                                <select 
+                                                    value={config.ffmpeg.encode_preset}
+                                                    onChange={(e) => updateConfig('ffmpeg.encode_preset', e.target.value)}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                >
+                                                    <option value="p1">P1 (Fastest)</option>
+                                                    <option value="p2">P2</option>
+                                                    <option value="p3">P3</option>
+                                                    <option value="p4">P4</option>
+                                                    <option value="p5">P5</option>
+                                                    <option value="p6">P6</option>
+                                                    <option value="p7">P7 (Best Quality)</option>
+                                                </select>
+                                                <p className="text-xs text-gray-400 mt-1">Higher = slower but better quality</p>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">CQ (Constant Quality)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="0"
+                                                    max="51"
+                                                    value={config.ffmpeg.cq}
+                                                    onChange={(e) => updateConfig('ffmpeg.cq', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                                <p className="text-xs text-gray-400 mt-1">0-51, lower = better quality (18 recommended)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* CPU Settings */}
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">CPU Settings (x265 Fallback)</h3>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">CPU Preset</label>
+                                                <select 
+                                                    value={config.ffmpeg.cpu_preset}
+                                                    onChange={(e) => updateConfig('ffmpeg.cpu_preset', e.target.value)}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                >
+                                                    <option value="ultrafast">Ultrafast</option>
+                                                    <option value="superfast">Superfast</option>
+                                                    <option value="veryfast">Veryfast</option>
+                                                    <option value="faster">Faster</option>
+                                                    <option value="fast">Fast</option>
+                                                    <option value="medium">Medium</option>
+                                                    <option value="slow">Slow</option>
+                                                    <option value="slower">Slower</option>
+                                                    <option value="veryslow">Veryslow</option>
+                                                </select>
+                                                <p className="text-xs text-gray-400 mt-1">Used when GPU not available</p>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">CRF (Constant Rate Factor)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="0"
+                                                    max="51"
+                                                    value={config.ffmpeg.crf}
+                                                    onChange={(e) => updateConfig('ffmpeg.crf', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                                <p className="text-xs text-gray-400 mt-1">0-51, lower = better quality (23 recommended)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Audio Settings */}
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">Audio Settings</h3>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Audio Codec</label>
+                                                <select 
+                                                    value={config.ffmpeg.audio_codec}
+                                                    onChange={(e) => updateConfig('ffmpeg.audio_codec', e.target.value)}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                >
+                                                    <option value="copy">Copy (No Re-encode)</option>
+                                                    <option value="aac">AAC</option>
+                                                    <option value="ac3">AC3</option>
+                                                    <option value="opus">Opus</option>
+                                                </select>
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Audio Bitrate (if re-encoding)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="64"
+                                                    max="320"
+                                                    step="32"
+                                                    value={config.ffmpeg.audio_bitrate}
+                                                    onChange={(e) => updateConfig('ffmpeg.audio_bitrate', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                    disabled={config.ffmpeg.audio_codec === 'copy'}
+                                                />
+                                                <p className="text-xs text-gray-400 mt-1">kbps (128 recommended)</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Advanced Settings */}
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">Advanced</h3>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Profile</label>
+                                                <select 
+                                                    value={config.ffmpeg.profile}
+                                                    onChange={(e) => updateConfig('ffmpeg.profile', e.target.value)}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                >
+                                                    <option value="main">Main</option>
+                                                    <option value="main10">Main10 (10-bit)</option>
+                                                </select>
+                                            </div>
+
+                                            <div className="flex items-center">
+                                                <label className="flex items-center cursor-pointer">
+                                                    <input 
+                                                        type="checkbox"
+                                                        checked={config.ffmpeg.two_pass}
+                                                        onChange={(e) => updateConfig('ffmpeg.two_pass', e.target.checked)}
+                                                        className="mr-2"
+                                                    />
+                                                    <span className="text-sm text-gray-300">Enable Two-Pass Encoding</span>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {activeTab === 'paths' && (
+                                <>
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-semibold text-white">Remote Server Paths</h3>
+                                        
+                                        <div>
+                                            <label className="block text-sm text-gray-300 mb-2">Remote Host</label>
+                                            <input 
+                                                type="text"
+                                                value={config.remote_host || ''}
+                                                onChange={(e) => updateConfig('remote_host', e.target.value)}
+                                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                placeholder="ds10256.seedhost.eu"
+                                            />
+                                        </div>
+
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Username</label>
+                                                <input 
+                                                    type="text"
+                                                    value={config.remote_user || ''}
+                                                    onChange={(e) => updateConfig('remote_user', e.target.value)}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Password</label>
+                                                <input 
+                                                    type="password"
+                                                    value={config.remote_password || ''}
+                                                    onChange={(e) => updateConfig('remote_password', e.target.value)}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm text-gray-300 mb-2">Remote Library Path</label>
+                                            <input 
+                                                type="text"
+                                                value={config.remote_path || ''}
+                                                onChange={(e) => updateConfig('remote_path', e.target.value)}
+                                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                placeholder="/home/user/library"
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">Local Paths</h3>
+                                        
+                                        <div>
+                                            <label className="block text-sm text-gray-300 mb-2">Local Temp Directory</label>
+                                            <input 
+                                                type="text"
+                                                value={config.local_temp || ''}
+                                                onChange={(e) => updateConfig('local_temp', e.target.value)}
+                                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                placeholder="C:/Temp/Sharkoder/cache"
+                                            />
+                                            <p className="text-xs text-gray-400 mt-1">Where files are downloaded for encoding</p>
+                                        </div>
+
+                                        <div>
+                                            <label className="block text-sm text-gray-300 mb-2">Local Backup Directory</label>
+                                            <input 
+                                                type="text"
+                                                value={config.local_backup || ''}
+                                                onChange={(e) => updateConfig('local_backup', e.target.value)}
+                                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                placeholder="C:/Temp/Sharkoder/backups"
+                                            />
+                                            <p className="text-xs text-gray-400 mt-1">Where original files are backed up</p>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {activeTab === 'storage' && (
+                                <>
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-semibold text-white">File Retention Options</h3>
+                                        
+                                        <div className="space-y-3">
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.storage?.keep_original || false}
+                                                    onChange={(e) => updateConfig('storage.keep_original', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Keep original source files locally</span>
+                                            </label>
+                                            <p className="text-xs text-gray-400 ml-6">Original files will be kept in backup directory after encoding</p>
+
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.storage?.keep_encoded || false}
+                                                    onChange={(e) => updateConfig('storage.keep_encoded', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Keep encoded files locally</span>
+                                            </label>
+                                            <p className="text-xs text-gray-400 ml-6">Encoded files will be kept in temp directory after upload</p>
+
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.storage?.create_backups || true}
+                                                    onChange={(e) => updateConfig('storage.create_backups', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Create backups on server before replacing</span>
+                                            </label>
+                                            <p className="text-xs text-gray-400 ml-6">Original file on server will be renamed with .bak extension</p>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">Cleanup Settings</h3>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Auto-cleanup old jobs (days)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="1"
+                                                    max="365"
+                                                    value={config.cleanup_old_jobs_days || 30}
+                                                    onChange={(e) => updateConfig('cleanup_old_jobs_days', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Auto-cleanup progress history (days)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="1"
+                                                    max="999"
+                                                    value={config.cleanup_old_progress_days || 365}
+                                                    onChange={(e) => updateConfig('cleanup_old_progress_days', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {activeTab === 'advanced' && (
+                                <>
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-semibold text-white">Connection Settings</h3>
+                                        
+                                        <div className="grid grid-cols-2 gap-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Max Concurrent Downloads</label>
+                                                <input 
+                                                    type="number"
+                                                    min="1"
+                                                    max="5"
+                                                    value={config.max_concurrent_downloads || 2}
+                                                    onChange={(e) => updateConfig('max_concurrent_downloads', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Max Prefetch Files</label>
+                                                <input 
+                                                    type="number"
+                                                    min="1"
+                                                    max="10"
+                                                    value={config.max_prefetch_files || 3}
+                                                    onChange={(e) => updateConfig('max_prefetch_files', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Retry Attempts</label>
+                                                <input 
+                                                    type="number"
+                                                    min="0"
+                                                    max="5"
+                                                    value={config.retry_attempts || 2}
+                                                    onChange={(e) => updateConfig('retry_attempts', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Connection Timeout (ms)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="5000"
+                                                    max="120000"
+                                                    step="1000"
+                                                    value={config.connection_timeout || 30000}
+                                                    onChange={(e) => updateConfig('connection_timeout', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">Behavior</h3>
+                                        
+                                        <div className="space-y-3">
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.advanced?.verify_checksums || true}
+                                                    onChange={(e) => updateConfig('advanced.verify_checksums', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Verify file integrity with checksums</span>
+                                            </label>
+
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.notification_settings?.show_completion_notifications !== false}
+                                                    onChange={(e) => updateConfig('notification_settings.show_completion_notifications', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Show completion notifications</span>
+                                            </label>
+
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.notification_settings?.show_error_notifications !== false}
+                                                    onChange={(e) => updateConfig('notification_settings.show_error_notifications', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Show error notifications</span>
+                                            </label>
+
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.notification_settings?.minimize_to_tray !== false}
+                                                    onChange={(e) => updateConfig('notification_settings.minimize_to_tray', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Minimize to system tray</span>
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                                        <h3 className="text-lg font-semibold text-white">Logging</h3>
+                                        
+                                        <div>
+                                            <label className="block text-sm text-gray-300 mb-2">Log Level</label>
+                                            <select 
+                                                value={config.advanced?.log_level || 'info'}
+                                                onChange={(e) => updateConfig('advanced.log_level', e.target.value)}
+                                                className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                            >
+                                                <option value="error">Error</option>
+                                                <option value="warn">Warning</option>
+                                                <option value="info">Info</option>
+                                                <option value="debug">Debug</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+
+                            {activeTab === 'ui' && (
+                                <>
+                                    <div className="space-y-4">
+                                        <h3 className="text-lg font-semibold text-white">UI Preferences</h3>
+                                        
+                                        <div className="space-y-3">
+                                            <label className="flex items-center cursor-pointer">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={config.ui.show_notifications}
+                                                    onChange={(e) => updateConfig('ui.show_notifications', e.target.checked)}
+                                                    className="mr-2"
+                                                />
+                                                <span className="text-sm text-gray-300">Show completion notifications</span>
+                                            </label>
+
+                                            <div>
+                                                <label className="block text-sm text-gray-300 mb-2">Auto-refresh interval (ms)</label>
+                                                <input 
+                                                    type="number"
+                                                    min="1000"
+                                                    max="30000"
+                                                    step="1000"
+                                                    value={config.ui.auto_refresh_interval}
+                                                    onChange={(e) => updateConfig('ui.auto_refresh_interval', parseInt(e.target.value))}
+                                                    className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                                                />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-6 py-4 border-t border-gray-700 flex justify-between items-center">
+                            <div className="text-xs text-gray-400">
+                                Settings saved to server: {config.last_update ? new Date(config.last_update).toLocaleString() : 'Never'}
+                            </div>
+                            <div className="flex space-x-3">
+                                <button onClick={onClose} className="btn-secondary">Cancel</button>
+                                <button onClick={handleSave} className="btn-success">💾 Save Settings</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        // Main App Component
+        const App = () => {
+            const [jobs, setJobs] = useState([]);
+            const [stats, setStats] = useState({});
+            const [progressData, setProgressData] = useState({});
+            const [encodedFiles, setEncodedFiles] = useState([]);
+            const [isConnected, setIsConnected] = useState(false);
+            const [logs, setLogs] = useState([]);
+            const [queueStatus, setQueueStatus] = useState({ isRunning: false, isPaused: false, loading: false });
+            const [showSettings, setShowSettings] = useState(false);
+            const [userConfig, setUserConfig] = useState(null);
+
+            useEffect(() => {
+                // Load initial data
+                loadJobs();
+                loadStats();
+                loadEncodedFiles();
+                loadQueueStatus();
+                loadUserConfig();
+
+                // Setup event listeners
+                window.electronAPI.onQueueProgress((data) => {
+                    setProgressData(prev => ({
+                        ...prev,
+                        [data.jobId]: data
+                    }));
+                });
+
+                window.electronAPI.onJobComplete((data) => {
+                    addLog(`Job completed: ${data.filepath}`, 'success');
+                    loadJobs();
+                    loadStats();
+                    loadEncodedFiles();
+                });
+
+                window.electronAPI.onQueueError((error) => {
+                    addLog(`Error: ${error.message}`, 'error');
+                });
+
+                // Poll queue status every 5 seconds
+                const statusInterval = setInterval(loadQueueStatus, 5000);
+
+                return () => {
+                    window.electronAPI.removeAllListeners('queue:progress');
+                    window.electronAPI.removeAllListeners('queue:jobComplete');
+                    window.electronAPI.removeAllListeners('queue:error');
+                    clearInterval(statusInterval);
+                };
+            }, []);
+
+            const loadJobs = async () => {
+                try {
+                    const result = await window.electronAPI.queueGetJobs();
+                    if (result.success) {
+                        setJobs(result.jobs);
+                    }
+                } catch (error) {
+                    console.error('Failed to load jobs:', error);
+                }
+            };
+
+            const loadStats = async () => {
+                try {
+                    const result = await window.electronAPI.queueGetStats();
+                    if (result.success) {
+                        setStats(result.stats);
+                    }
+                } catch (error) {
+                    console.error('Failed to load stats:', error);
+                }
+            };
+
+            const loadEncodedFiles = async () => {
+                try {
+                    const result = await window.electronAPI.progressGetEncodedFiles();
+                    if (result.success) {
+                        setEncodedFiles(result.encodedFiles);
+                    }
+                } catch (error) {
+                    console.error('Failed to load encoded files:', error);
+                }
+            };
+
+            const addLog = (message, type = 'info') => {
+                const log = {
+                    id: Date.now(),
+                    message,
+                    type,
+                    timestamp: new Date().toLocaleTimeString()
+                };
+                setLogs(prev => [log, ...prev.slice(0, 99)]);
+            };
+
+            const loadQueueStatus = async () => {
+                try {
+                    const result = await window.electronAPI.queueGetStatus();
+                    if (result.success) {
+                        setQueueStatus(prev => ({
+                            ...prev,
+                            isRunning: result.isRunning,
+                            isPaused: result.isPaused,
+                            currentJob: result.currentJob
+                        }));
+                    }
+                } catch (error) {
+                    console.error('Failed to load queue status:', error);
+                }
+            };
+
+            const toggleQueueProcessing = async () => {
+                try {
+                    setQueueStatus(prev => ({ ...prev, loading: true }));
+                    
+                    if (queueStatus.isRunning) {
+                        const result = await window.electronAPI.queueStop();
+                        if (result.success) {
+                            addLog('Queue processing stopped', 'info');
+                            await loadQueueStatus();
+                        } else {
+                            addLog(`Failed to stop queue: ${result.error}`, 'error');
+                        }
+                    } else {
+                        const result = await window.electronAPI.queueStart();
+                        if (result.success) {
+                            addLog('Queue processing started', 'success');
+                            await loadQueueStatus();
+                        } else {
+                            addLog(`Failed to start queue: ${result.error}`, 'error');
+                        }
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                } finally {
+                    setQueueStatus(prev => ({ ...prev, loading: false }));
+                }
+            };
+
+            const loadUserConfig = async () => {
+                try {
+                    const result = await window.electronAPI.configLoadUserConfig();
+                    if (result.success) {
+                        setUserConfig(result.config);
+                    }
+                } catch (error) {
+                    console.error('Failed to load user config:', error);
+                }
+            };
+
+            const saveUserConfig = async (newConfig) => {
+                try {
+                    const result = await window.electronAPI.configSaveUserConfig(newConfig);
+                    if (result.success) {
+                        setUserConfig(newConfig);
+                        addLog('Settings saved successfully', 'success');
+                    } else {
+                        addLog(`Failed to save settings: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            };
+
+            const handleAddToQueue = async (filePath, fileInfo) => {
+                try {
+                    const result = await window.electronAPI.queueAddJob(filePath, fileInfo);
+                    if (result.success) {
+                        addLog(`Added to queue: ${filePath}`, 'success');
+                        loadJobs();
+                        loadStats();
+                    } else {
+                        addLog(`Failed to add to queue: ${result.error}`, 'error');
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            };
+
+            const handleRemoveJob = async (jobId) => {
+                try {
+                    const result = await window.electronAPI.queueRemoveJob(jobId);
+                    if (result.success) {
+                        addLog('Job removed from queue', 'info');
+                        loadJobs();
+                        loadStats();
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            };
+
+            const handlePauseJob = async (jobId) => {
+                try {
+                    const result = await window.electronAPI.queuePauseJob(jobId);
+                    if (result.success) {
+                        addLog('Job paused', 'info');
+                        loadJobs();
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            };
+
+            const handleResumeJob = async (jobId) => {
+                try {
+                    const result = await window.electronAPI.queueResumeJob(jobId);
+                    if (result.success) {
+                        addLog('Job resumed', 'info');
+                        loadJobs();
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            };
+
+            const handleRetryJob = async (jobId) => {
+                try {
+                    const result = await window.electronAPI.queueRetryJob(jobId);
+                    if (result.success) {
+                        addLog('Job queued for retry', 'info');
+                        loadJobs();
+                    }
+                } catch (error) {
+                    addLog(`Error: ${error.message}`, 'error');
+                }
+            };
+
+            return (
+                <div className="h-screen flex flex-col">
+                    {/* Header */}
+                    <div className="bg-gray-900 px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+                        <h1 className="text-2xl font-bold text-white flex items-center">
+                            🦈 Sharkoder
+                            <span className="ml-3 text-sm text-gray-400 font-normal">
+                                GPU-Accelerated Video Encoder
+                            </span>
+                        </h1>
+                        <button 
+                            onClick={() => setShowSettings(true)}
+                            className="btn-secondary flex items-center space-x-2"
+                        >
+                            <span>⚙️</span>
+                            <span>Settings</span>
+                        </button>
+                    </div>
+
+                    {/* Settings Panel */}
+                    {showSettings && userConfig && (
+                        <SettingsPanel 
+                            userConfig={userConfig}
+                            onSave={saveUserConfig}
+                            onClose={() => setShowSettings(false)}
+                        />
+                    )}
+
+                    {/* Main Content */}
+                    <div className="flex-1 flex overflow-hidden">
+                        {/* Left Panel - File Tree */}
+                        <div className="w-1/2 p-4">
+                            <FileTree 
+                                onAddToQueue={handleAddToQueue}
+                                encodedFiles={encodedFiles}
+                            />
+                        </div>
+
+                        {/* Right Panel - Queue */}
+                        <div className="w-1/2 p-4">
+                            <QueueTable
+                                jobs={jobs}
+                                progressData={progressData}
+                                onRemoveJob={handleRemoveJob}
+                                onPauseJob={handlePauseJob}
+                                onResumeJob={handleResumeJob}
+                                onRetryJob={handleRetryJob}
+                                toggleQueueProcessing={toggleQueueProcessing}
+                                queueStatus={queueStatus}
+                            />
+                        </div>
+                    </div>
+
+                    {/* Bottom Panel - Logs */}
+                    <div className="h-32 bg-gray-900 border-t border-gray-700 p-4">
+                        <div className="h-full overflow-y-auto scrollbar-thin">
+                            <div className="space-y-1">
+                                {logs.map(log => (
+                                    <div key={log.id} className={`text-sm flex items-center space-x-2 ${
+                                        log.type === 'error' ? 'text-red-400' :
+                                        log.type === 'success' ? 'text-green-400' :
+                                        'text-gray-300'
+                                    }`}>
+                                        <span className="text-gray-500">{log.timestamp}</span>
+                                        <span>{log.message}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Status Bar */}
+                    <StatusBar stats={stats} isConnected={isConnected} />
+                </div>
+            );
+        };
+
+        // Render the app (React 18 API)
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>

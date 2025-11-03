@@ -1,0 +1,54 @@
+{
+  "_comment": "Sharkoder Configuration Example - Copy this to sharkoder.config.json and customize",
+  
+  "remote_host": "your-server.com",
+  "remote_user": "your-username",
+  "remote_port": 22,
+  "remote_path": "/home/username/media",
+  
+  "_comment_auth": "Authentication: Choose ONE method below",
+  "remote_password": "your-password-here",
+  "_or_use_ssh_key": "Comment out password and use these instead:",
+  "ssh_key_path": "C:/Users/YourName/.ssh/id_rsa",
+  "ssh_key_passphrase": "key-passphrase-if-any",
+  
+  "local_temp": "C:/Temp/Sharkoder/cache",
+  "local_backup": "C:/Temp/Sharkoder/backups",
+  
+  "_comment_encoding": "Encoding settings - preset from p1 (fast) to p7 (slow), cq 18-28 (lower=better quality)",
+  "encode_preset": "p7",
+  "cq": 18,
+  
+  "_comment_performance": "Performance tuning",
+  "max_concurrent_downloads": 2,
+  "max_prefetch_files": 3,
+  "retry_attempts": 2,
+  "connection_timeout": 30000,
+  
+  "_comment_cleanup": "Cleanup settings (days to keep)",
+  "cleanup_old_jobs_days": 30,
+  "cleanup_old_progress_days": 365,
+  
+  "ffmpeg_options": {
+    "hwaccel": "cuda",
+    "video_codec": "hevc_nvenc",
+    "audio_codec": "copy",
+    "_comment": "Additional FFmpeg options can be added here",
+    "extra_options": []
+  },
+  
+  "supported_extensions": [".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv", ".webm"],
+  
+  "notification_settings": {
+    "show_completion_notifications": true,
+    "show_error_notifications": true,
+    "minimize_to_tray": true
+  },
+  
+  "advanced": {
+    "log_level": "info",
+    "auto_start_queue": true,
+    "verify_checksums": true,
+    "create_backups": true
+  }
+}

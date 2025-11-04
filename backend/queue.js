@@ -162,6 +162,14 @@ class QueueManager extends EventEmitter {
         size: fileInfo.size || 0,
         codec_before: fileInfo.codec || null,
         status: "waiting",
+        // Métadonnées vidéo enrichies
+        container: fileInfo.container || null,
+        resolution: fileInfo.resolution || null,
+        duration: fileInfo.duration || null,
+        bitrate: fileInfo.bitrate || null,
+        audio: fileInfo.audio || 0,
+        audioCodec: fileInfo.audioCodec || null,
+        subtitles: fileInfo.subtitles || 0,
       };
 
       const jobId = await createJob(jobData);

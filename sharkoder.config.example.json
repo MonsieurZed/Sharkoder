@@ -15,6 +15,14 @@
   "local_temp": "C:/Users/YourName/AppData/Local/Temp/Sharkoder/cache",
   "local_backup": "C:/Users/YourName/AppData/Local/Temp/Sharkoder/backups",
 
+  "_comment_webdav": "WebDAV settings (optional) - include http:// or https:// in URL",
+  "webdav_enabled": false,
+  "webdav_url": "http://your-server.com:13888",
+  "webdav_username": "your-webdav-user",
+  "webdav_password": "your-webdav-password",
+  "webdav_path": "/",
+  "webdav_transfer_mode": "prefer_webdav",
+
   "_comment_encoding": "Encoding settings - preset from p1 (fast) to p7 (slow), cq 18-28 (lower=better quality)",
   "encode_preset": "p7",
   "cq": 18,

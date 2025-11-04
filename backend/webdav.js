@@ -20,7 +20,14 @@ class WebDAVManager {
       }
 
       // WebDAV URL for Seedhost: http://ds10256.seedhost.eu:13888
-      const webdavUrl = this.config.webdav_url || "http://ds10256.seedhost.eu:13888";
+      let webdavUrl = this.config.webdav_url || "http://ds10256.seedhost.eu:13888";
+      
+      // Validate and fix URL if protocol is missing
+      if (!webdavUrl.startsWith("http://") && !webdavUrl.startsWith("https://")) {
+        logger.warn(`WebDAV URL missing protocol, adding http:// - ${webdavUrl}`);
+        webdavUrl = "http://" + webdavUrl;
+      }
+      
       const webdavUser = this.config.webdav_user || "sharkdav";
       const webdavPass = this.config.webdav_password || "sharkdav";
 

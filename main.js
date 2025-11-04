@@ -5,28 +5,52 @@ const fs = require("fs-extra");
 // Disable GPU acceleration to fix GPU process crashes
 app.disableHardwareAcceleration();
 
-console.log("===== MAIN.JS LOADING =====");
-console.log("Step 1: Electron modules loaded");
+// Disable disk cache to prevent permission errors
+app.commandLine.appendSwitch('disable-http-cache');
+app.commandLine.appendSwitch('disk-cache-size', '0');
 
 // Backend modules
-console.log("Step 2: Loading backend modules...");
 const { initDatabase } = require("./backend/db");
-console.log("Step 2a: db.js loaded");
 const { QueueManager } = require("./backend/queue");
-console.log("Step 2b: queue.js loaded");
 const { TransferManager } = require("./backend/transfer");
-console.log("Step 2c: transfer.js loaded");
 const { ProgressFileManager } = require("./backend/progressfile");
-console.log("Step 2d: progressfile.js loaded");
 const { logger } = require("./backend/utils");
-console.log("Step 2e: utils.js loaded");
-console.log("Step 3: All backend modules loaded successfully");
+const { WebDAVExplorer } = require("./backend/webdav-explorer");
 
 let mainWindow;
 let tray;
 let queueManager;
 let transferManager; // Unified SFTP/WebDAV manager
 let progressFileManager;
+let webdavExplorer; // WebDAV explorer for remote file browsing
+
+// Hook logger to send logs to renderer
+const originalLoggerMethods = {
+  info: logger.info.bind(logger),
+  warn: logger.warn.bind(logger),
+  error: logger.error.bind(logger),
+};
+
+const sendLogToRenderer = (level, message, ...args) => {
+  const logMessage = typeof message === 'string' ? message : JSON.stringify(message);
+  const additionalData = args.length > 0 ? ' ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') : '';
+  
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('log:message', {
+      level,
+      message: logMessage + additionalData,
+      timestamp: new Date().toISOString(),
+    });
+  }
+  
+  // Call original logger method
+  originalLoggerMethods[level](message, ...args);
+};
+
+// Override logger methods
+logger.info = (...args) => sendLogToRenderer('info', ...args);
+logger.warn = (...args) => sendLogToRenderer('warn', ...args);
+logger.error = (...args) => sendLogToRenderer('error', ...args);
 
 // Initialize app directories
 const initAppDirectories = async () => {
@@ -73,11 +97,38 @@ const createWindow = () => {
     mainWindow = null;
   });
 
-  // Minimize to tray instead of closing
+  // Close window behavior: quit the app instead of minimizing to tray
   mainWindow.on("close", (event) => {
     if (!app.isQuiting) {
+      // Option: Ask for confirmation if queue is running
+      if (queueManager && queueManager.getQueueStats().processing > 0) {
+        const { dialog } = require("electron");
+        const choice = dialog.showMessageBoxSync(mainWindow, {
+          type: "question",
+          buttons: ["Minimize to Tray", "Quit Anyway", "Cancel"],
+          defaultId: 0,
+          title: "Encoding in Progress",
+          message: "Files are currently being encoded.",
+          detail: "Do you want to minimize to tray or quit the application?",
+        });
+
+        if (choice === 0) {
+          // Minimize to tray
+          event.preventDefault();
+          mainWindow.hide();
+          return;
+        } else if (choice === 2) {
+          // Cancel
+          event.preventDefault();
+          return;
+        }
+        // choice === 1: continue to quit
+      }
+
+      // Quit the app properly
       event.preventDefault();
-      mainWindow.hide();
+      app.isQuiting = true;
+      app.quit();
     }
   });
 };
@@ -128,7 +179,92 @@ const createTray = () => {
 
 // IPC Handlers
 const setupIpcHandlers = () => {
-  // Transfer operations (SFTP/WebDAV)
+  // WebDAV Explorer operations
+  ipcMain.handle("webdav:connect", async () => {
+    try {
+      const config = require("./sharkoder.config.json");
+      webdavExplorer = new WebDAVExplorer(config);
+      const result = await webdavExplorer.connect();
+      return result;
+    } catch (error) {
+      logger.error("WebDAV connection failed:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("webdav:disconnect", async () => {
+    try {
+      if (webdavExplorer) {
+        await webdavExplorer.disconnect();
+      }
+      return { success: true };
+    } catch (error) {
+      logger.error("WebDAV disconnection failed:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("webdav:listDirectory", async (event, remotePath, includeVideoInfo = false) => {
+    try {
+      if (!webdavExplorer) {
+        const config = require("./sharkoder.config.json");
+        webdavExplorer = new WebDAVExplorer(config);
+        await webdavExplorer.connect();
+      }
+      const items = await webdavExplorer.listDirectory(remotePath || "/", includeVideoInfo);
+      return { success: true, items };
+    } catch (error) {
+      logger.error("Failed to list directory:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("webdav:getFolderStats", async (event, remotePath) => {
+    try {
+      if (!webdavExplorer) {
+        const config = require("./sharkoder.config.json");
+        webdavExplorer = new WebDAVExplorer(config);
+        await webdavExplorer.connect();
+      }
+      const stats = await webdavExplorer.getFolderStats(remotePath || "/");
+      return { success: true, stats };
+    } catch (error) {
+      logger.error("Failed to get folder stats:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("webdav:scanFolderRecursive", async (event, remotePath) => {
+    try {
+      if (!webdavExplorer) {
+        const config = require("./sharkoder.config.json");
+        webdavExplorer = new WebDAVExplorer(config);
+        await webdavExplorer.connect();
+      }
+      const files = await webdavExplorer.scanFolderRecursive(remotePath || "/");
+      return { success: true, files };
+    } catch (error) {
+      logger.error("Failed to scan folder recursively:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("webdav:getFileInfo", async (event, remotePath) => {
+    try {
+      if (!webdavExplorer) {
+        const config = require("./sharkoder.config.json");
+        webdavExplorer = new WebDAVExplorer(config);
+        await webdavExplorer.connect();
+      }
+      const fileInfo = await webdavExplorer.getFileInfo(remotePath);
+      return { success: true, fileInfo };
+    } catch (error) {
+      logger.error("Failed to get file info:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Transfer operations (for downloads/uploads during encoding)
   ipcMain.handle("sftp:connect", async () => {
     try {
       await transferManager.connect();
@@ -149,39 +285,43 @@ const setupIpcHandlers = () => {
     }
   });
 
-  ipcMain.handle("sftp:listFiles", async (event, remotePath) => {
+  // WebDAV operations (legacy compatibility)
+  ipcMain.handle("webdav:testConnection", async () => {
     try {
-      const files = await transferManager.listDirectory(remotePath);
-      return { success: true, files };
-    } catch (error) {
-      logger.error("Failed to list files:", error);
-      return { success: false, error: error.message };
-    }
-  });
+      // Load current config
+      const userConfig = require("./sharkoder.config.json");
+      
+      if (!userConfig.webdav_url) {
+        return { success: false, error: "WebDAV URL not configured" };
+      }
 
-  ipcMain.handle("sftp:scanFolder", async (event, remotePath) => {
-    try {
-      // Use SFTP manager's scan function (has video filtering logic)
-      const files = await transferManager.sftpManager.scanForVideoFiles(remotePath);
-      return { success: true, files };
-    } catch (error) {
-      logger.error("Failed to scan folder:", error);
-      return { success: false, error: error.message };
-    }
-  });
+      // Create temporary WebDAV manager for testing
+      const { WebDAVManager } = require("./backend/webdav");
+      const testWebdav = new WebDAVManager({
+        webdav_url: userConfig.webdav_url,
+        webdav_user: userConfig.webdav_username,
+        webdav_password: userConfig.webdav_password,
+        remote_path: userConfig.webdav_path || "/",
+      });
 
-  ipcMain.handle("sftp:getDirectorySize", async (event, remotePath) => {
-    try {
-      const fullPath = require("path").posix.join(transferManager.config.remote_path, remotePath);
-      const result = await transferManager.sftpManager.getDirectorySizeWithCache(fullPath);
-      return {
-        success: true,
-        size: result.size,
-        fileCount: result.fileCount,
-        avgSize: result.avgSize,
-      };
+      // Try to connect and list root directory
+      const result = await testWebdav.connect();
+      
+      if (result.success) {
+        // Test listing directory to confirm access
+        try {
+          await testWebdav.listDirectory("/");
+          await testWebdav.disconnect();
+          return { success: true, message: "WebDAV connection successful!" };
+        } catch (listError) {
+          await testWebdav.disconnect();
+          return { success: false, error: `Connected but cannot list directory: ${listError.message}` };
+        }
+      } else {
+        return result;
+      }
     } catch (error) {
-      logger.error("Failed to get directory size:", error);
+      logger.error("WebDAV connection test failed:", error);
       return { success: false, error: error.message };
     }
   });
@@ -493,53 +633,72 @@ const setupIpcHandlers = () => {
       return { success: false, error: error.message };
     }
   });
+
+  // WebDAV Cache sync handler
+  ipcMain.handle("webdav:syncCache", async () => {
+    try {
+      logger.info("Manual cache sync requested");
+      if (mainWindow) {
+        mainWindow.webContents.send("webdav:triggerCacheSync");
+      }
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to trigger cache sync:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // WebDAV Build complete cache (optimized)
+  ipcMain.handle("webdav:buildCompleteCache", async (event) => {
+    try {
+      if (!webdavExplorer) {
+        return { success: false, error: "WebDAV not connected" };
+      }
+
+      logger.info("Building complete cache (optimized)...");
+      
+      // Progress callback to send updates to renderer
+      const onProgress = (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("webdav:cacheProgress", progress);
+        }
+      };
+
+      const result = await webdavExplorer.buildCompleteCache(onProgress);
+      
+      if (result.success) {
+        logger.info(`Cache built successfully: ${result.stats.totalFolders} folders in ${result.stats.totalTime}s`);
+      }
+      
+      return result;
+    } catch (error) {
+      logger.error("Failed to build complete cache:", error);
+      return { success: false, error: error.message };
+    }
+  });
 };
 
 // App initialization
 app.whenReady().then(async () => {
   try {
-    console.log("App is ready, starting initialization...");
-
     // Initialize directories and database
-    console.log("Initializing directories...");
     await initAppDirectories();
-    console.log("Directories initialized");
-
-    console.log("Initializing database...");
     await initDatabase();
-    console.log("Database initialized");
 
     // Initialize managers
-    console.log("Loading config...");
     const config = require("./sharkoder.config.json");
-    console.log("Config loaded:", config);
-
-    console.log("Creating Transfer manager...");
     transferManager = new TransferManager(config);
-    console.log("Transfer manager created");
-
-    console.log("Creating queue manager...");
     queueManager = new QueueManager(config, transferManager);
-    console.log("Queue manager created");
-
-    console.log("Creating progress file manager...");
     progressFileManager = new ProgressFileManager(config, transferManager);
-    console.log("Progress file manager created");
 
     // Setup IPC handlers
-    console.log("Setting up IPC handlers...");
     setupIpcHandlers();
-    console.log("IPC handlers set up");
 
     // Create window and tray
-    console.log("Creating window...");
     createWindow();
-    console.log("Window created");
 
     // Temporarily disable tray - icon file is causing issues
-    // console.log("Creating tray...");
     // createTray();
-    // console.log("Tray created");
 
     // Setup progress events
     queueManager.on("progress", (data) => {
@@ -625,6 +784,18 @@ app.on("before-quit", async (event) => {
     app.isQuiting = true;
 
     logger.info("Application shutting down...");
+
+    // Trigger cache sync before shutdown
+    try {
+      logger.info("Triggering cache sync before shutdown...");
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("webdav:triggerCacheSync");
+        // Wait a bit for sync to complete
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    } catch (error) {
+      logger.error("Error during cache sync on shutdown:", error);
+    }
 
     // Clean shutdown
     try {

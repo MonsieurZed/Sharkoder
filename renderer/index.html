@@ -412,32 +412,707 @@
         );
       };
 
+      // Cache Manager Component
+      const CacheManager = ({ onClose }) => {
+        const [rebuildingCache, setRebuildingCache] = useState(false);
+        const [rebuildProgress, setRebuildProgress] = useState({ current: 0, total: 0, currentFolder: '', eta: 0 });
+        const [cacheInfo, setCacheInfo] = useState({ size: 0, entries: 0 });
+        const [dirCacheInfo, setDirCacheInfo] = useState({ size: 0, entries: 0 });
+        const CACHE_KEY = 'webdav_folder_stats_cache';
+        const DIRECTORY_CACHE_KEY = 'webdav_directory_structure_cache';
+
+        // Charger les infos du cache
+        React.useEffect(() => {
+          updateCacheInfo();
+        }, []);
+
+        const updateCacheInfo = () => {
+          try {
+            // Stats Cache
+            const cached = localStorage.getItem(CACHE_KEY);
+            if (cached) {
+              const cache = JSON.parse(cached);
+              const entries = Object.keys(cache).length;
+              const size = new Blob([cached]).size;
+              setCacheInfo({ size, entries });
+            } else {
+              setCacheInfo({ size: 0, entries: 0 });
+            }
+
+            // Directory Structure Cache
+            const dirCached = localStorage.getItem(DIRECTORY_CACHE_KEY);
+            if (dirCached) {
+              const dirCache = JSON.parse(dirCached);
+              const entries = Object.keys(dirCache).length;
+              const size = new Blob([dirCached]).size;
+              setDirCacheInfo({ size, entries });
+            } else {
+              setDirCacheInfo({ size: 0, entries: 0 });
+            }
+          } catch (error) {
+            console.error('Error loading cache info:', error);
+            setCacheInfo({ size: 0, entries: 0 });
+            setDirCacheInfo({ size: 0, entries: 0 });
+          }
+        };
+
+        const formatBytes = (bytes) => {
+          if (bytes === 0) return '0 B';
+          const k = 1024;
+          const sizes = ['B', 'KB', 'MB', 'GB'];
+          const i = Math.floor(Math.log(bytes) / Math.log(k));
+          return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+        };
+
+        const clearCache = () => {
+          if (confirm('⚠️ Clear all folder stats cache?\n\nThis will remove all folder statistics from cache.')) {
+            try {
+              localStorage.removeItem(CACHE_KEY);
+              updateCacheInfo();
+              alert('✅ Stats cache cleared successfully!');
+            } catch (error) {
+              alert('❌ Error clearing cache: ' + error.message);
+            }
+          }
+        };
+
+        const clearDirectoryCache = () => {
+          if (confirm('⚠️ Clear directory structure cache?\n\nThis will remove all cached directory listings. Folders will be reloaded from the server on next visit.')) {
+            try {
+              localStorage.removeItem(DIRECTORY_CACHE_KEY);
+              updateCacheInfo();
+              alert('✅ Directory cache cleared successfully!');
+            } catch (error) {
+              alert('❌ Error clearing directory cache: ' + error.message);
+            }
+          }
+        };
+
+        const clearAllCaches = () => {
+          if (confirm('⚠️ Clear ALL caches?\n\nThis will remove both folder statistics and directory structure caches.')) {
+            try {
+              localStorage.removeItem(CACHE_KEY);
+              localStorage.removeItem(DIRECTORY_CACHE_KEY);
+              updateCacheInfo();
+              alert('✅ All caches cleared successfully!');
+            } catch (error) {
+              alert('❌ Error clearing caches: ' + error.message);
+            }
+          }
+        };
+
+        const rebuildCompleteCache = async () => {
+          try {
+            setRebuildingCache(true);
+            setRebuildProgress({ current: 0, total: 0, currentFolder: 'Initializing...', eta: 0 });
+            
+            const startTime = Date.now();
+            
+            console.log('🚀 Starting optimized cache rebuild...');
+            
+            // Setup progress listener
+            const progressListener = (progress) => {
+              setRebuildProgress({
+                current: progress.current,
+                total: progress.total,
+                currentFolder: progress.currentFolder,
+                eta: progress.eta || 0,
+              });
+            };
+            
+            if (window.electronAPI.onCacheProgress) {
+              window.electronAPI.onCacheProgress(progressListener);
+            }
+            
+            // Call optimized backend method (single pass through entire tree)
+            const result = await window.electronAPI.buildCompleteCache();
+            
+            if (result.success) {
+              // Save the cache
+              localStorage.setItem(CACHE_KEY, JSON.stringify(result.cache));
+              updateCacheInfo();
+              
+              const totalTime = result.stats.totalTime;
+              const totalFolders = result.stats.totalFolders;
+              
+              console.log(`✅ Cache rebuilt successfully! ${totalFolders} folders in ${totalTime}s`);
+              
+              // Synchroniser le cache avec le serveur après le rebuild
+              console.log('🔄 Syncing cache with server...');
+              try {
+                if (window.electronAPI.syncCache) {
+                  await window.electronAPI.syncCache();
+                  console.log('✅ Cache synced with server');
+                }
+              } catch (syncError) {
+                console.error('Error syncing cache:', syncError);
+              }
+              
+              alert(`✅ Cache rebuilt successfully!\n\n${totalFolders} folders scanned in ${totalTime}s\n\n🚀 Optimized single-pass algorithm used!`);
+            } else {
+              console.error('Cache rebuild failed:', result.error);
+              alert(`❌ Cache rebuild failed: ${result.error}`);
+            }
+            
+          } catch (error) {
+            console.error('Error rebuilding cache:', error);
+            alert('❌ Error rebuilding cache: ' + error.message);
+          } finally {
+            setRebuildingCache(false);
+            setRebuildProgress({ current: 0, total: 0, currentFolder: '', eta: 0 });
+          }
+        };
+
+        const formatETA = (seconds) => {
+          const mins = Math.floor(seconds / 60);
+          const secs = seconds % 60;
+          return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        };
+
+        return (
+          <div className="space-y-6">
+            <h3 className="text-lg font-semibold text-white">Cache Management</h3>
+            
+            {/* Cache Info */}
+            <div className="bg-gray-700 rounded-lg p-6">
+              <h4 className="text-md font-semibold mb-4 text-white">📊 Cache Statistics</h4>
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                <div className="bg-gray-800 rounded p-4 col-span-2 border-l-4 border-blue-500">
+                  <div className="text-gray-400 text-sm mb-2">📁 Folder Stats Cache</div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-gray-500">Cached Folders</div>
+                      <div className="text-xl font-bold text-white">{cacheInfo.entries.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Cache Size</div>
+                      <div className="text-xl font-bold text-white">{formatBytes(cacheInfo.size)}</div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="bg-gray-800 rounded p-4 col-span-2 border-l-4 border-green-500">
+                  <div className="text-gray-400 text-sm mb-2">🗂️ Directory Structure Cache</div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="text-xs text-gray-500">Cached Directories</div>
+                      <div className="text-xl font-bold text-white">{dirCacheInfo.entries.toLocaleString()}</div>
+                    </div>
+                    <div>
+                      <div className="text-xs text-gray-500">Cache Size</div>
+                      <div className="text-xl font-bold text-white">{formatBytes(dirCacheInfo.size)}</div>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-400 mt-2">
+                    💡 Speeds up navigation by caching directory listings (max age: 5 min)
+                  </div>
+                </div>
+                
+                <div className="bg-gray-800 rounded p-4 col-span-2">
+                  <div className="text-gray-400 text-sm mb-1">Total Cache Size</div>
+                  <div className="text-2xl font-bold text-white">{formatBytes(cacheInfo.size + dirCacheInfo.size)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Actions */}
+            <div className="space-y-4">
+              <div className="bg-gray-700 rounded-lg p-6">
+                <h4 className="text-md font-semibold mb-2 text-white">🔄 Rebuild Complete Cache</h4>
+                <p className="text-gray-300 text-sm mb-4">
+                  Scan all folders recursively and rebuild the entire cache. This may take several minutes depending on your library size.
+                </p>
+                <button 
+                  onClick={rebuildCompleteCache} 
+                  disabled={rebuildingCache}
+                  className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {rebuildingCache ? '⏳ Rebuilding...' : '🔄 Rebuild Complete Cache'}
+                </button>
+              </div>
+
+              <div className="bg-gray-700 rounded-lg p-6">
+                <h4 className="text-md font-semibold mb-2 text-white">🗑️ Clear Cache</h4>
+                <p className="text-gray-300 text-sm mb-4">
+                  Remove cached data. Choose what to clear based on your needs.
+                </p>
+                <div className="space-y-2">
+                  <button 
+                    onClick={clearCache} 
+                    disabled={rebuildingCache}
+                    className="bg-orange-600 hover:bg-orange-700 text-white py-2 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  >
+                    📊 Clear Folder Stats Cache
+                  </button>
+                  <button 
+                    onClick={clearDirectoryCache} 
+                    disabled={rebuildingCache}
+                    className="bg-orange-600 hover:bg-orange-700 text-white py-2 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                  >
+                    🗂️ Clear Directory Structure Cache
+                  </button>
+                  <button 
+                    onClick={clearAllCaches} 
+                    disabled={rebuildingCache}
+                    className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    🗑️ Clear ALL Caches
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Progress */}
+            {rebuildingCache && (
+              <div className="bg-gray-700 rounded-lg p-6">
+                <h4 className="text-md font-semibold mb-4 text-white">⏳ Rebuild Progress</h4>
+                
+                <div className="mb-4">
+                  <div className="flex justify-between text-sm text-gray-300 mb-2">
+                    <span>{rebuildProgress.current} / {rebuildProgress.total} folders</span>
+                    <span>{rebuildProgress.total > 0 ? Math.round((rebuildProgress.current / rebuildProgress.total) * 100) : 0}%</span>
+                  </div>
+                  <div className="w-full bg-gray-600 rounded-full h-4 overflow-hidden">
+                    <div 
+                      className="bg-blue-500 h-full transition-all duration-300"
+                      style={{ width: `${rebuildProgress.total > 0 ? (rebuildProgress.current / rebuildProgress.total) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+
+                {rebuildProgress.eta > 0 && (
+                  <div className="text-sm text-gray-300 mb-2">
+                    ⏱️ Estimated time remaining: {formatETA(rebuildProgress.eta)}
+                  </div>
+                )}
+
+                <div className="text-sm text-gray-400 truncate">
+                  📁 Current: {rebuildProgress.currentFolder || 'Initializing...'}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      };
+
       // File Tree Component
-      const FileTree = ({ onAddToQueue, encodedFiles }) => {
-        const [currentPath, setCurrentPath] = useState("");
+      const FileTree = ({ onAddToQueue, encodedFiles, userConfig }) => {
+        const [currentPath, setCurrentPath] = useState("/");
         const [files, setFiles] = useState([]);
         const [loading, setLoading] = useState(false);
         const [connected, setConnected] = useState(false);
         const [sortBy, setSortBy] = useState("alpha"); // 'alpha' or 'size'
         const [searchTerm, setSearchTerm] = useState("");
         const [calculatingSize, setCalculatingSize] = useState({}); // Track folders being calculated
+        const [loadedFromCache, setLoadedFromCache] = useState(false); // Track if directory was loaded from cache
+        const [sessionCache, setSessionCache] = useState({}); // In-memory cache for current session (never expires)
+        const sessionCacheRef = React.useRef(sessionCache); // Ref pour éviter la recréation de loadFiles
+        const [loadingVideoInfo, setLoadingVideoInfo] = useState({}); // Track files loading video info
+        const [calculatingStats, setCalculatingStats] = useState({ isCalculating: false, current: 0, total: 0 }); // Track stats calculation progress
+
+        // Synchroniser la ref avec le state
+        React.useEffect(() => {
+          sessionCacheRef.current = sessionCache;
+          console.log(`🔄 sessionCache updated, keys:`, Object.keys(sessionCache));
+        }, [sessionCache]);
+
+        // Cache persistant pour les stats des dossiers (localStorage)
+        const CACHE_KEY = 'webdav_folder_stats_cache';
+        const DIRECTORY_CACHE_KEY = 'webdav_directory_structure_cache';
+        
+        // Charger le cache depuis localStorage
+        const loadCache = () => {
+          try {
+            const cached = localStorage.getItem(CACHE_KEY);
+            return cached ? JSON.parse(cached) : {};
+          } catch (error) {
+            console.error('Error loading cache:', error);
+            return {};
+          }
+        };
+
+        // Sauvegarder le cache dans localStorage
+        const saveCache = (cache) => {
+          try {
+            localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+          } catch (error) {
+            console.error('Error saving cache:', error);
+          }
+        };
+
+        // Charger le cache de l'architecture des répertoires
+        const loadDirectoryCache = () => {
+          try {
+            const cached = localStorage.getItem(DIRECTORY_CACHE_KEY);
+            return cached ? JSON.parse(cached) : {};
+          } catch (error) {
+            console.error('Error loading directory cache:', error);
+            return {};
+          }
+        };
+
+        // Sauvegarder le cache de l'architecture des répertoires
+        const saveDirectoryCache = (cache) => {
+          try {
+            localStorage.setItem(DIRECTORY_CACHE_KEY, JSON.stringify(cache));
+            console.log(`📦 Directory cache saved (${Object.keys(cache).length} directories)`);
+          } catch (error) {
+            console.error('Error saving directory cache:', error);
+          }
+        };
+
+        // Vider le cache de l'architecture
+        const clearDirectoryCache = () => {
+          try {
+            localStorage.removeItem(DIRECTORY_CACHE_KEY);
+            console.log('🗑️ Directory cache cleared');
+          } catch (error) {
+            console.error('Error clearing directory cache:', error);
+          }
+        };
+
+        // Vérifier si le cache est à jour par rapport au serveur
+        const isCacheValid = (cachedItem, serverLastModified) => {
+          if (!cachedItem || !cachedItem.lastModified) return false;
+          if (!serverLastModified) return true; // Si pas de date serveur, on garde le cache
+          
+          const cacheDate = new Date(cachedItem.lastModified).getTime();
+          const serverDate = new Date(serverLastModified).getTime();
+          
+          return cacheDate >= serverDate; // Cache valide si plus récent ou égal
+        };
+
+        // Synchroniser le cache avec le serveur au démarrage
+        const syncCacheWithServer = async () => {
+          try {
+            console.log('🔄 Starting cache synchronization with server...');
+            const cache = loadCache();
+            const cachedPaths = Object.keys(cache);
+            
+            if (cachedPaths.length === 0) {
+              console.log('📭 No cache to sync');
+              return;
+            }
+
+            console.log(`📦 Cache loaded: ${cachedPaths.length} folders cached`);
+            console.log('✅ Cache ready to use (no recalculation needed)');
+            
+            // Option: Download cache from server if it exists
+            // This would sync with other devices/sessions
+            // TODO: Implement server-side cache file download here if needed
+            
+            // For now, just use the local cache as-is
+            // The cache will be validated on-demand when folders are accessed
+            
+          } catch (error) {
+            console.error('Error during cache sync:', error);
+          }
+        };
+
+        // Fonction pour calculer les stats d'un dossier
+        const calculateFolderSize = async (folderPath, silent = false, forceRefresh = false) => {
+          try {
+            // Charger le cache
+            const cache = loadCache();
+            
+            // Vérifier si on a un cache valide (sauf si forceRefresh)
+            if (!forceRefresh && cache[folderPath]) {
+              const cachedStats = cache[folderPath];
+              
+              // Appliquer immédiatement le cache aux fichiers
+              setFiles((prevFiles) =>
+                prevFiles.map((file) => {
+                  if (file.path === folderPath && file.type === "directory") {
+                    return {
+                      ...file,
+                      size: cachedStats.totalSize,
+                      fileCount: cachedStats.fileCount,
+                      videoCount: cachedStats.videoCount,
+                      avgSize: cachedStats.avgSize,
+                      sizeFormatted: cachedStats.totalSizeFormatted,
+                      cached: true,
+                      lastModified: cachedStats.lastModified,
+                      upToDate: cachedStats.upToDate !== false,
+                    };
+                  }
+                  return file;
+                })
+              );
+              
+              // Si le cache existe et est marqué comme à jour, ne pas recalculer
+              if (cachedStats.upToDate !== false) {
+                if (!silent) {
+                  console.log(`✅ Using cached stats for ${folderPath}`);
+                }
+                return;
+              }
+            }
+            
+            // Pas de cache OU cache pas à jour OU forceRefresh : calculer
+
+            // Mark as calculating (sauf en mode silent)
+            if (!silent) {
+              setCalculatingSize((prev) => ({ ...prev, [folderPath]: true }));
+            }
+
+            const result = await window.electronAPI.webdavGetFolderStats(folderPath);
+
+            if (result.success) {
+              // Mettre à jour le cache avec la date actuelle
+              const statsWithDate = {
+                ...result.stats,
+                lastModified: new Date().toISOString(),
+                upToDate: true,
+              };
+              
+              // 🔥 RECHARGER le cache juste avant de sauvegarder pour éviter les race conditions
+              const latestCache = loadCache();
+              latestCache[folderPath] = statsWithDate;
+              saveCache(latestCache);
+
+              // Synchroniser avec le serveur si c'est un refresh forcé
+              if (forceRefresh) {
+                console.log('🔄 Forced refresh, syncing cache with server...');
+                try {
+                  if (window.electronAPI.syncCache) {
+                    await window.electronAPI.syncCache();
+                    console.log('✅ Cache synced with server after refresh');
+                  }
+                } catch (syncError) {
+                  console.error('Error syncing cache after refresh:', syncError);
+                }
+              }
+
+              // Update the file in the list with the new size, fileCount and avgSize
+              setFiles((prevFiles) =>
+                prevFiles.map((file) => {
+                  if (file.path === folderPath && file.type === "directory") {
+                    return {
+                      ...file,
+                      size: result.stats.totalSize,
+                      fileCount: result.stats.fileCount,
+                      videoCount: result.stats.videoCount,
+                      avgSize: result.stats.avgSize,
+                      sizeFormatted: result.stats.totalSizeFormatted,
+                      cached: true,
+                      lastModified: statsWithDate.lastModified,
+                      upToDate: true,
+                    };
+                  }
+                  return file;
+                })
+              );
+
+              // 🔥 UPDATE SESSION CACHE: Mettre à jour les items en cache avec les nouvelles stats
+              const folderDir = folderPath.substring(0, folderPath.lastIndexOf('/')) || '/';
+              console.log(`💾 Updating session cache for folder "${folderPath}" in path "${folderDir}"`);
+              
+              if (sessionCacheRef.current[folderDir]) {
+                const updatedCache = sessionCacheRef.current[folderDir].map((file) => {
+                  if (file.path === folderPath && file.type === "directory") {
+                    return {
+                      ...file,
+                      size: result.stats.totalSize,
+                      fileCount: result.stats.fileCount,
+                      videoCount: result.stats.videoCount,
+                      avgSize: result.stats.avgSize,
+                      sizeFormatted: result.stats.totalSizeFormatted,
+                      cached: true,
+                      lastModified: statsWithDate.lastModified,
+                      upToDate: true,
+                    };
+                  }
+                  return file;
+                });
+                
+                // Utiliser la forme fonctionnelle pour mettre à jour UNE CLÉ spécifique
+                setSessionCache((prevCache) => ({
+                  ...prevCache,
+                  [folderDir]: updatedCache
+                }));
+                console.log(`✅ Session cache updated for "${folderDir}" with stats for "${folderPath}"`);
+              }
+            } else {
+              console.error("Failed to calculate folder size:", result.error);
+            }
+          } catch (error) {
+            console.error("Error calculating folder size:", error);
+          } finally {
+            // Remove from calculating state
+            if (!silent) {
+              setCalculatingSize((prev) => {
+                const newState = { ...prev };
+                delete newState[folderPath];
+                return newState;
+              });
+            }
+          }
+        };
 
         const loadFiles = useCallback(
-          async (path = "") => {
+          async (path = "/", forceRefresh = false) => {
             setLoading(true);
             try {
-              const result = await window.electronAPI.sftpListFiles(path);
-              if (result.success) {
-                setFiles(result.files);
-                // If files loaded successfully, we're connected
-                if (!connected) {
-                  setConnected(true);
+              // Normaliser le chemin
+              const normalizedPath = path === "/" ? "/" : (path.startsWith('/') ? path : '/' + path);
+              console.log(`🔍 loadFiles: "${normalizedPath}" (original: "${path}", forceRefresh=${forceRefresh})`);
+              console.log(`📋 Current session cache keys:`, Object.keys(sessionCacheRef.current));
+              console.log(`🎯 Cache exists for "${normalizedPath}"?`, !!sessionCacheRef.current[normalizedPath]);
+              
+              // 1. CACHE SESSION - Si on l'a déjà, on l'affiche immédiatement
+              if (!forceRefresh && sessionCacheRef.current[normalizedPath]) {
+                console.log(`⚡ CACHE HIT: ${normalizedPath}`);
+                const cachedItems = sessionCacheRef.current[normalizedPath];
+                console.log(`📦 Cache contains ${cachedItems.length} items`);
+                
+                // Log quelques exemples pour voir les métadonnées
+                const sampleFolder = cachedItems.find(i => i.type === 'directory');
+                if (sampleFolder) {
+                  console.log(`📁 Sample folder:`, { 
+                    name: sampleFolder.name, 
+                    size: sampleFolder.size,
+                    fileCount: sampleFolder.fileCount,
+                    sizeFormatted: sampleFolder.sizeFormatted,
+                    cached: sampleFolder.cached,
+                    upToDate: sampleFolder.upToDate
+                  });
                 }
-              } else {
-                console.error("Failed to load files:", result.error);
+                const sampleVideo = cachedItems.find(i => i.isVideo);
+                if (sampleVideo) {
+                  console.log(`🎬 Sample video:`, { 
+                    name: sampleVideo.name, 
+                    codec: sampleVideo.codec, 
+                    resolution: sampleVideo.resolution,
+                    container: sampleVideo.container 
+                  });
+                }
+                
+                // Compter combien de dossiers ont des stats
+                const foldersWithStats = cachedItems.filter(i => i.type === 'directory' && i.cached).length;
+                const totalFolders = cachedItems.filter(i => i.type === 'directory').length;
+                console.log(`📊 Folders with cached stats: ${foldersWithStats}/${totalFolders}`);
+                
+                setFiles(cachedItems);
+                setLoadedFromCache(true);
+                setLoading(false);
+                if (!connected) setConnected(true);
+                return;
               }
+              
+              // 2. PAS DE CACHE - Charger depuis le serveur
+              console.log(`🌐 LOADING from server: ${normalizedPath}`);
+              setLoadedFromCache(false);
+              
+              const result = await window.electronAPI.webdavListDirectory(normalizedPath, true);
+              
+              if (!result.success) {
+                console.error("❌ Failed:", result.error);
+                setLoading(false);
+                return;
+              }
+              
+              // Récupérer le cache des stats
+              const statsCache = loadCache();
+              console.log(`📂 statsCache has ${Object.keys(statsCache).length} entries`);
+              
+              // Log quelques exemples de clés du cache pour debug
+              const sampleKeys = Object.keys(statsCache).slice(0, 5);
+              console.log(`🔑 Sample statsCache keys:`, sampleKeys);
+              
+              // Appliquer les stats si disponibles
+              const items = (result.items || []).map(item => {
+                if (item.type === "directory") {
+                  const hasStats = !!statsCache[item.path];
+                  if (hasStats) {
+                    const cachedStats = statsCache[item.path];
+                    return {
+                      ...item,
+                      size: cachedStats.totalSize,
+                      fileCount: cachedStats.fileCount,
+                      videoCount: cachedStats.videoCount,
+                      avgSize: cachedStats.avgSize,
+                      sizeFormatted: cachedStats.totalSizeFormatted,
+                      cached: true,
+                      upToDate: true, // Marquer comme à jour
+                    };
+                  } else {
+                    // Log les dossiers SANS stats pour debug
+                    if (Object.keys(statsCache).length < 20 || Math.random() < 0.01) {
+                      console.log(`❌ No stats in cache for: "${item.path}" (name: "${item.name}")`);
+                    }
+                  }
+                }
+                return item;
+              });
+              
+              const foldersFromCache = items.filter(i => i.type === 'directory' && i.cached).length;
+              const totalFolders = items.filter(i => i.type === 'directory').length;
+              console.log(`📊 Applied stats from localStorage: ${foldersFromCache}/${totalFolders} folders have cached stats`);
+              
+              setFiles(items);
+              if (!connected) setConnected(true);
+              
+              // Sauvegarder dans le session cache avec le chemin normalisé
+              setSessionCache(prev => {
+                const updated = { ...prev, [normalizedPath]: items };
+                console.log(`💾 SAVING to session cache: "${normalizedPath}" with ${items.length} items`);
+                console.log(`📋 Session cache now has keys:`, Object.keys(updated));
+                return updated;
+              });
+              console.log(`✅ Loaded ${items.length} items (${items.filter(i => i.type === 'directory').length} folders)`);
+              
+              // Calculer les stats manquantes progressivement par vagues
+              // Ne calculer QUE les dossiers qui n'ont pas de stats en cache
+              const foldersNeedingStats = items.filter(i => 
+                i.type === 'directory' && !i.cached && (!i.size || i.size === 0)
+              );
+              
+              if (foldersNeedingStats.length > 0) {
+                // Trier par ordre alphabétique
+                foldersNeedingStats.sort((a, b) => a.name.localeCompare(b.name));
+                
+                console.log(`📊 Need to calculate stats for ${foldersNeedingStats.length} folders (sorted alphabetically)`);
+                
+                // Activer l'indicateur de chargement
+                setCalculatingStats({ isCalculating: true, current: 0, total: foldersNeedingStats.length });
+                
+                // Calculer par vagues de 10 avec délai entre chaque vague
+                const batchSize = 10;
+                const delayBetweenBatches = 10; // 10ms entre chaque vague
+                
+                const calculateInBatches = async (folders, startIndex = 0) => {
+                  if (startIndex >= folders.length) {
+                    console.log(`✅ All folder stats calculated!`);
+                    setCalculatingStats({ isCalculating: false, current: 0, total: 0 });
+                    return;
+                  }
+                  
+                  const batch = folders.slice(startIndex, startIndex + batchSize);
+                  const remaining = folders.length - startIndex - batch.length;
+                  
+                  console.log(`🔢 Calculating batch ${Math.floor(startIndex / batchSize) + 1}: ${batch.length} folders (${remaining} remaining)`);
+                  
+                  // Mettre à jour le compteur
+                  setCalculatingStats({ isCalculating: true, current: startIndex + batch.length, total: folders.length });
+                  
+                  // 🔥 ATTENDRE que TOUS les calculs du batch soient terminés
+                  await Promise.all(batch.map(folder => calculateFolderSize(folder.path, true)));
+                  
+                  // Continuer avec le prochain batch après un court délai
+                  if (remaining > 0) {
+                    setTimeout(() => calculateInBatches(folders, startIndex + batchSize), delayBetweenBatches);
+                  } else {
+                    // Dernier batch terminé
+                    setCalculatingStats({ isCalculating: false, current: 0, total: 0 });
+                  }
+                };
+                
+                // Lancer le calcul par vagues
+                calculateInBatches(foldersNeedingStats);
+              }
+              
             } catch (error) {
-              console.error("Error loading files:", error);
+              console.error("❌ Error loading files:", error);
             } finally {
               setLoading(false);
             }
@@ -445,22 +1120,48 @@
           [connected]
         );
 
-        // Auto-load files on mount (if auto-connected)
+        // Synchroniser le cache au montage du composant
         React.useEffect(() => {
-          const tryLoadFiles = async () => {
-            // Try to load files - if connection exists, it will work
-            await loadFiles();
+          const initSync = async () => {
+            try {
+              // Vérifier si on est connecté
+              const result = await window.electronAPI.webdavConnect();
+              if (result.success) {
+                setConnected(true);
+                // Synchroniser le cache avec le serveur
+                await syncCacheWithServer();
+                // Charger les fichiers de la racine
+                await loadFiles("/");
+              }
+            } catch (error) {
+              console.error('Error during initial sync:', error);
+            }
+          };
+          
+          initSync();
+
+          // Listen for cache sync triggers from main process
+          const handleCacheSyncTrigger = async () => {
+            console.log('Cache sync triggered by main process');
+            await syncCacheWithServer();
           };
 
-          tryLoadFiles();
-        }, []); // Run once on mount
+          if (window.electronAPI.onWebdavTriggerCacheSync) {
+            window.electronAPI.onWebdavTriggerCacheSync(handleCacheSyncTrigger);
+          }
+
+          // Cleanup listener on unmount
+          return () => {
+            // Note: electronAPI cleanup would go here if available
+          };
+        }, []); // Empty array = run once on mount
 
         const connectToServer = async () => {
           try {
-            const result = await window.electronAPI.sftpConnect();
+            const result = await window.electronAPI.webdavConnect();
             if (result.success) {
               setConnected(true);
-              await loadFiles();
+              await loadFiles("/");
             } else {
               alert("Failed to connect: " + result.error);
             }
@@ -470,12 +1171,22 @@
         };
 
         const navigateToFolder = (folderPath) => {
-          setCurrentPath(folderPath);
-          loadFiles(folderPath);
+          // Normaliser le chemin : toujours commencer par /
+          const normalizedPath = folderPath.startsWith('/') ? folderPath : '/' + folderPath;
+          console.log(`🧭 Navigating to: ${normalizedPath} (original: ${folderPath})`);
+          setCurrentPath(normalizedPath);
+          setTimeout(() => loadFiles(normalizedPath), 0);
         };
 
         const goBack = () => {
-          const parentPath = currentPath.split("/").slice(0, -1).join("/");
+          if (currentPath === "/") return;
+          console.log(`⬅️ goBack called, currentPath="${currentPath}"`);
+          const pathParts = currentPath.split("/").filter(p => p);
+          console.log(`📂 pathParts before pop:`, pathParts);
+          pathParts.pop();
+          console.log(`📂 pathParts after pop:`, pathParts);
+          const parentPath = pathParts.length > 0 ? "/" + pathParts.join("/") : "/";
+          console.log(`🎯 Calculated parentPath="${parentPath}"`);
           navigateToFolder(parentPath);
         };
 
@@ -483,10 +1194,54 @@
           onAddToQueue(file.path, file);
         };
 
+        // Charger les métadonnées vidéo d'un fichier spécifique
+        const loadVideoInfo = async (filePath) => {
+          try {
+            setLoadingVideoInfo(prev => ({ ...prev, [filePath]: true }));
+            
+            const result = await window.electronAPI.webdavGetFileInfo(filePath);
+            
+            if (result.success && result.fileInfo) {
+              // Mettre à jour le fichier dans la liste
+              setFiles(prevFiles => 
+                prevFiles.map(f => 
+                  f.path === filePath 
+                    ? { ...f, ...result.fileInfo }
+                    : f
+                )
+              );
+              
+              // Mettre à jour le cache de session
+              setSessionCache(prev => {
+                const pathFiles = prev[currentPath];
+                if (pathFiles) {
+                  return {
+                    ...prev,
+                    [currentPath]: pathFiles.map(f => 
+                      f.path === filePath 
+                        ? { ...f, ...result.fileInfo }
+                        : f
+                    )
+                  };
+                }
+                return prev;
+              });
+            }
+          } catch (error) {
+            console.error("Error loading video info:", error);
+          } finally {
+            setLoadingVideoInfo(prev => {
+              const newState = { ...prev };
+              delete newState[filePath];
+              return newState;
+            });
+          }
+        };
+
         const addFolderToQueue = async (folderPath) => {
           try {
             setLoading(true);
-            const result = await window.electronAPI.sftpScanFolder(folderPath);
+            const result = await window.electronAPI.webdavScanFolderRecursive(folderPath);
 
             if (result.success && result.files.length > 0) {
               let addedCount = 0;
@@ -496,7 +1251,6 @@
                   addedCount++;
                 }
               }
-              // Removed alert popup - logs are shown in the UI instead
               console.log(`Added ${addedCount} files to queue from folder`);
             } else if (result.success && result.files.length === 0) {
               console.log("No video files found in this folder");
@@ -510,108 +1264,98 @@
           }
         };
 
-        const calculateFolderSize = async (folderPath) => {
-          try {
-            // Mark as calculating
-            setCalculatingSize((prev) => ({ ...prev, [folderPath]: true }));
-
-            const result = await window.electronAPI.sftpGetDirectorySize(folderPath);
-
-            if (result.success) {
-              // Update the file in the list with the new size, fileCount and avgSize
-              setFiles((prevFiles) =>
-                prevFiles.map((file) => {
-                  if (file.path === folderPath && file.type === "directory") {
-                    return {
-                      ...file,
-                      size: result.size,
-                      fileCount: result.fileCount,
-                      avgSize: result.avgSize,
-                      sizeFormatted: formatSize(result.size),
-                      cached: true,
-                    };
-                  }
-                  return file;
-                })
-              );
-            } else {
-              console.error("Failed to calculate folder size:", result.error);
-            }
-          } catch (error) {
-            console.error("Error calculating folder size:", error);
-          } finally {
-            // Remove from calculating state
-            setCalculatingSize((prev) => {
-              const newState = { ...prev };
-              delete newState[folderPath];
-              return newState;
-            });
-          }
+        // Fusionné: un seul bouton "Add" qui détecte automatiquement si c'est une série ou un dossier
+        const shouldShowAddButton = (folderName, filesList) => {
+          // Show button for any directory (series or regular folder)
+          return true;
         };
 
-        const shouldShowAddFolderButton = (folderName, filesList) => {
-          // Show button if folder name contains "Season"
-          if (folderName.toLowerCase().includes("season")) {
-            return true;
-          }
-
-          // Show button if folder contains video files
-          const hasVideoFiles = filesList.some((f) => f.type === "file");
-          if (hasVideoFiles) {
-            return true;
-          }
-
-          return false;
-        };
-
-        const shouldShowAddSeriesButton = (folderName, filesList) => {
-          // Ne pas montrer le bouton si c'est déjà un dossier Season
-          if (folderName.toLowerCase().includes("season")) {
-            return false;
-          }
-
-          // Show button if folder contains multiple "Season" subfolders
-          const seasonFolders = filesList.filter((f) => f.type === "directory" && f.name.toLowerCase().includes("season"));
-
-          return seasonFolders.length >= 2; // Au moins 2 saisons
-        };
-
-        const addSeriesToQueue = async (seriesPath) => {
+        const addToQueueSmart = async (folderPath, folderName) => {
           try {
             setLoading(true);
 
-            // Scanner tous les sous-dossiers Season du dossier actuel
+            // Détecter si c'est une série (contient plusieurs dossiers Season)
             const seasonFolders = files.filter((f) => f.type === "directory" && f.name.toLowerCase().includes("season"));
+            const isSeries = seasonFolders.length >= 2;
 
-            if (seasonFolders.length === 0) {
-              alert("No season folders found in this directory");
-              return;
-            }
+            if (isSeries) {
+              // Mode série: ajouter tous les dossiers Season
+              let totalAdded = 0;
+              let totalSeasons = 0;
 
-            let totalAdded = 0;
-            let totalSeasons = 0;
+              for (const seasonFolder of seasonFolders) {
+                const result = await window.electronAPI.webdavScanFolderRecursive(seasonFolder.path);
 
-            for (const seasonFolder of seasonFolders) {
-              const result = await window.electronAPI.sftpScanFolder(seasonFolder.path);
-
-              if (result.success && result.files.length > 0) {
-                totalSeasons++;
-                for (const file of result.files) {
-                  if (!isEncoded(file.path)) {
-                    await addToQueue({ path: file.path, ...file });
-                    totalAdded++;
+                if (result.success && result.files.length > 0) {
+                  totalSeasons++;
+                  for (const file of result.files) {
+                    if (!isEncoded(file.path)) {
+                      await addToQueue({ path: file.path, ...file });
+                      totalAdded++;
+                    }
                   }
                 }
               }
-            }
 
-            if (totalAdded > 0) {
-              alert(`✅ Added ${totalAdded} episodes from ${totalSeasons} seasons to queue!`);
+              if (totalAdded > 0) {
+                alert(`✅ Added ${totalAdded} episodes from ${totalSeasons} seasons to queue!`);
+              } else {
+                alert("No new episodes to add (all already encoded)");
+              }
             } else {
-              alert("No new episodes to add (all already encoded)");
+              // Mode dossier simple: ajouter tous les fichiers du dossier récursivement
+              const result = await window.electronAPI.webdavScanFolderRecursive(folderPath);
+
+              if (result.success && result.files.length > 0) {
+                let addedCount = 0;
+                for (const file of result.files) {
+                  if (!isEncoded(file.path)) {
+                    await addToQueue({ path: file.path, ...file });
+                    addedCount++;
+                  }
+                }
+                if (addedCount > 0) {
+                  alert(`✅ Added ${addedCount} files to queue!`);
+                } else {
+                  alert("No new files to add (all already encoded)");
+                }
+              } else if (result.success && result.files.length === 0) {
+                alert("No video files found in this folder");
+              } else {
+                console.error("Failed to scan folder:", result.error);
+              }
             }
           } catch (error) {
-            alert("Error adding series: " + error.message);
+            alert("Error adding to queue: " + error.message);
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        // Fonction pour rafraîchir tous les dossiers du répertoire actuel
+        const refreshAllFolders = async () => {
+          const folders = files.filter(f => f.type === "directory");
+          if (folders.length === 0) return;
+          
+          setLoading(true);
+          try {
+            // Marquer tous les dossiers comme pas à jour dans le cache
+            const cache = loadCache();
+            folders.forEach(folder => {
+              if (cache[folder.path]) {
+                cache[folder.path].upToDate = false;
+              }
+            });
+            saveCache(cache);
+            
+            // Recalculer tous les dossiers
+            for (const folder of folders) {
+              await calculateFolderSize(folder.path, true, true);
+            }
+            
+            console.log(`✅ Refreshed stats for ${folders.length} folders`);
+          } catch (error) {
+            console.error("Error refreshing folders:", error);
           } finally {
             setLoading(false);
           }
@@ -690,6 +1434,24 @@
         const getDisplayFiles = () => {
           let displayFiles = files;
           displayFiles = filterFiles(displayFiles);
+          
+          // Filter empty folders if option is enabled
+          if (userConfig?.ui?.hide_empty_folders !== false) {
+            displayFiles = displayFiles.filter(file => {
+              // Keep files (not directories)
+              if (file.type !== "directory") return true;
+              
+              // Keep directories that have video files (videoCount > 0)
+              if (file.videoCount && file.videoCount > 0) return true;
+              
+              // Keep directories without cached stats (we don't know if they're empty yet)
+              if (!file.cached) return true;
+              
+              // Hide directories with 0 video files
+              return false;
+            });
+          }
+          
           displayFiles = sortFiles(displayFiles);
           return displayFiles;
         };
@@ -700,10 +1462,36 @@
               <h2 className="text-xl font-bold">Remote Files</h2>
               <div className="flex items-center space-x-2">
                 {loading && <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400"></div>}
+                {loadedFromCache && !loading && (
+                  <span className="text-xs text-green-400 bg-green-900/30 px-2 py-1 rounded" title="Directory loaded from cache">
+                    📦 Cached
+                  </span>
+                )}
                 <span className={connected ? "text-green-400" : "text-gray-400"}>●</span>
                 <span className="text-sm">{connected ? "Connected" : "Disconnected"}</span>
               </div>
             </div>
+
+            {/* Indicateur de calcul des stats */}
+            {calculatingStats.isCalculating && (
+              <div className="mb-3 bg-blue-900/30 border border-blue-500/50 rounded-lg p-3 flex items-center space-x-3">
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
+                <div className="flex-1">
+                  <div className="text-sm text-blue-300 font-medium mb-1">
+                    📊 Calculating folder statistics... {calculatingStats.current} / {calculatingStats.total}
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div 
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${(calculatingStats.current / calculatingStats.total) * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+                <span className="text-xs text-blue-400">
+                  {Math.round((calculatingStats.current / calculatingStats.total) * 100)}%
+                </span>
+              </div>
+            )}
 
             {connected && (
               <>
@@ -751,13 +1539,23 @@
                 </div>
 
                 {/* Navigation */}
-                <div className="flex items-center space-x-2 mb-4">
-                  {currentPath && (
-                    <button onClick={goBack} className="btn-secondary">
-                      ← Back
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center space-x-2">
+                    {currentPath && currentPath !== "/" && (
+                      <button onClick={goBack} className="btn-secondary">
+                        ← Back
+                      </button>
+                    )}
+                    <span className="text-sm text-gray-300">{currentPath || "/"}</span>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button onClick={() => loadFiles(currentPath, true)} className="btn-secondary text-xs" title="Refresh directory from server (clear cache)">
+                      🔄 Refresh Directory
                     </button>
-                  )}
-                  <span className="text-sm text-gray-300">/{currentPath || "library"}</span>
+                    <button onClick={refreshAllFolders} className="btn-secondary text-xs" title="Refresh all folder stats in current directory">
+                      � Refresh Stats
+                    </button>
+                  </div>
                 </div>
 
                 {/* File List */}
@@ -777,10 +1575,10 @@
                               <div className="text-sm text-gray-400">
                                 {file.type === "directory" ? (
                                   <>
-                                    {file.size > 0 ? (
+                                    {file.size > 0 || file.fileCount > 0 ? (
                                       <div className="flex items-center space-x-3">
-                                        <span>📦 {formatSize(file.size)}</span>
-                                        {file.fileCount > 0 && <span>📁 {file.fileCount} files</span>}
+                                        {file.size > 0 && <span>📦 {file.sizeFormatted || formatSize(file.size)}</span>}
+                                        {file.videoCount > 0 && <span>🎬 {file.videoCount} videos</span>}
                                         {file.avgSize > 0 && <span className="text-xs">⚖️ {formatSize(file.avgSize)}/file</span>}
                                       </div>
                                     ) : (
@@ -789,8 +1587,29 @@
                                   </>
                                 ) : (
                                   <>
-                                    {formatSize(file.size)}
-                                    {isEncoded(file.path) && <span className="ml-2 text-green-400">✅ Encoded</span>}
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span>📦 {formatSize(file.size)}</span>
+                                      {file.container && <span className="bg-indigo-900/40 px-2 py-0.5 rounded text-xs">📦 {file.container.toUpperCase()}</span>}
+                                      {file.codec && <span className="bg-blue-900/40 px-2 py-0.5 rounded text-xs">🎞️ {file.codec.toUpperCase()}</span>}
+                                      {file.resolution && <span className="bg-cyan-900/40 px-2 py-0.5 rounded text-xs">📺 {file.resolution}</span>}
+                                      {file.duration && (
+                                        <span className="bg-purple-900/40 px-2 py-0.5 rounded text-xs">
+                                          ⏱️ {Math.floor(file.duration / 60)}:{String(Math.floor(file.duration % 60)).padStart(2, '0')}
+                                        </span>
+                                      )}
+                                      {file.bitrate && file.bitrate > 0 && (
+                                        <span className="bg-green-900/40 px-2 py-0.5 rounded text-xs">
+                                          📊 {(file.bitrate / 1000000).toFixed(1)} Mbps
+                                        </span>
+                                      )}
+                                      {file.audio > 0 && (
+                                        <span className="bg-orange-900/40 px-2 py-0.5 rounded text-xs">
+                                          🔊 {file.audio} {file.audioCodec ? `(${file.audioCodec.toUpperCase()})` : 'audio'}
+                                        </span>
+                                      )}
+                                      {file.subtitles > 0 && <span className="bg-yellow-900/40 px-2 py-0.5 rounded text-xs">💬 {file.subtitles} subs</span>}
+                                      {isEncoded(file.path) && <span className="text-green-400 font-semibold">✅ Encoded</span>}
+                                    </div>
                                   </>
                                 )}
                               </div>
@@ -800,11 +1619,11 @@
                             {file.type === "directory" ? (
                               <>
                                 <button onClick={() => navigateToFolder(file.path)} className="btn-secondary">
-                                  Open
+                                  ↘️                                
                                 </button>
                                 {!file.cached && !calculatingSize[file.path] && (
-                                  <button onClick={() => calculateFolderSize(file.path)} className="btn-secondary text-xs" title="Calculate folder size">
-                                    📊 Size
+                                  <button onClick={() => calculateFolderSize(file.path, false, false)} className="btn-secondary text-xs" title="Calculate folder size">
+                                    📊 
                                   </button>
                                 )}
                                 {calculatingSize[file.path] && (
@@ -813,26 +1632,30 @@
                                     Calculating...
                                   </span>
                                 )}
-                                {file.cached && (
-                                  <button onClick={() => calculateFolderSize(file.path)} className="btn-secondary text-xs" title="Refresh folder size">
+                                {file.cached && file.upToDate !== false && (
+                                  <button onClick={() => calculateFolderSize(file.path, false, true)} className="btn-secondary text-xs" title="Force refresh folder stats">
                                     🔄
                                   </button>
                                 )}
-                                {shouldShowAddFolderButton(file.name, files) && (
-                                  <button onClick={() => addFolderToQueue(file.path)} className="btn-success" title="Add all videos in this folder to queue">
-                                    📋 Add Folder
+                                {file.cached && file.upToDate === false && (
+                                  <button onClick={() => calculateFolderSize(file.path, false, true)} className="bg-yellow-600 hover:bg-yellow-500 text-white px-2 py-1 rounded text-xs" title="Stats may be outdated - click to refresh">
+                                    🔄
                                   </button>
                                 )}
-                                {shouldShowAddSeriesButton(file.name, files) && (
-                                  <button onClick={() => addSeriesToQueue(file.path)} className="btn-success" title="Add all seasons of this series to queue">
-                                    📺 Add Series
-                                  </button>
-                                )}
+                                <button onClick={() => addToQueueSmart(file.path, file.name)} className="btn-success" title="Add folder to queue (detects series automatically)">
+                                  ➕
+                                </button>
                               </>
                             ) : (
-                              <button onClick={() => addToQueue(file)} disabled={isEncoded(file.path)} className={isEncoded(file.path) ? "btn-secondary opacity-50 cursor-not-allowed" : "btn-success"}>
-                                {isEncoded(file.path) ? "Encoded" : "Add to Queue"}
-                              </button>
+                              <>
+                                <button 
+                                  onClick={() => addToQueue(file)} 
+                                  disabled={isEncoded(file.path)} 
+                                  className={isEncoded(file.path) ? "btn-secondary opacity-50 cursor-not-allowed" : "btn-success"}
+                                >
+                                  {isEncoded(file.path) ? "Encoded" : "Add to Queue"}
+                                </button>
+                              </>
                             )}
                           </div>
                         </div>
@@ -1227,13 +2050,6 @@
                   )}
                 </div>
               </div>
-
-              {/* Help Text */}
-              <div className="mt-3 text-xs text-gray-400 text-center">
-                {!queueStatus.isRunning && jobs.length === 0 && "⚠️ Ajoutez des fichiers à la queue pour commencer"}
-                {!queueStatus.isRunning && jobs.length > 0 && "✅ Prêt à encoder. Cliquez sur DÉMARRER."}
-                {queueStatus.isRunning && "🎬 En cours. ARRÊTER annulera les jobs en cours et les remettra à zéro."}
-              </div>
             </div>
 
             {/* Encoder Info Panel */}
@@ -1288,12 +2104,29 @@
                         <div key={job.id} className="bg-gray-800 rounded-lg p-4">
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex-1">
-                              <div className="font-medium text-white mb-1">{job.filepath.split("/").pop()}</div>
-                              <div className="text-sm text-gray-400 mb-2">{job.filepath}</div>
-                              <div className="flex items-center space-x-4 text-sm text-gray-300">
-                                <span>Size: {formatSize(job.size)}</span>
-                                {job.codec_before && <span>Codec: {job.codec_before}</span>}
-                                {job.started_at && <span>Started: {new Date(job.started_at).toLocaleTimeString()}</span>}
+                              <div className="font-medium text-white mb-1">{job.filepath}</div>
+                              <div className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="bg-gray-700 px-2 py-0.5 rounded">📦 {formatSize(job.size)}</span>
+                                {job.container && <span className="bg-indigo-900/40 px-2 py-0.5 rounded">📦 {job.container.toUpperCase()}</span>}
+                                {job.codec_before && <span className="bg-blue-900/40 px-2 py-0.5 rounded">🎞️ {job.codec_before.toUpperCase()}</span>}
+                                {job.resolution && <span className="bg-cyan-900/40 px-2 py-0.5 rounded">📺 {job.resolution}</span>}
+                                {job.duration && (
+                                  <span className="bg-purple-900/40 px-2 py-0.5 rounded">
+                                    ⏱️ {Math.floor(job.duration / 60)}:{String(Math.floor(job.duration % 60)).padStart(2, '0')}
+                                  </span>
+                                )}
+                                {job.bitrate && job.bitrate > 0 && (
+                                  <span className="bg-green-900/40 px-2 py-0.5 rounded">
+                                    📊 {(job.bitrate / 1000000).toFixed(1)} Mbps
+                                  </span>
+                                )}
+                                {job.audio > 0 && (
+                                  <span className="bg-orange-900/40 px-2 py-0.5 rounded">
+                                    🔊 {job.audio} {job.audioCodec ? `(${job.audioCodec.toUpperCase()})` : 'audio'}
+                                  </span>
+                                )}
+                                {job.subtitles > 0 && <span className="bg-yellow-900/40 px-2 py-0.5 rounded">💬 {job.subtitles} subs</span>}
+                                {job.started_at && <span className="bg-gray-700 px-2 py-0.5 rounded">🕐 {new Date(job.started_at).toLocaleTimeString()}</span>}
                               </div>
                             </div>
                             <div className="flex items-center space-x-3">
@@ -1407,6 +2240,12 @@
           remote_path: "",
           local_temp: "",
           local_backup: "",
+          webdav_enabled: false,
+          webdav_url: "",
+          webdav_username: "",
+          webdav_password: "",
+          webdav_path: "/",
+          webdav_transfer_mode: "auto",
           max_concurrent_downloads: 2,
           max_prefetch_files: 3,
           retry_attempts: 2,
@@ -1438,6 +2277,7 @@
         const [config, setConfig] = useState({ ...defaultConfig, ...userConfig });
         const [activeTab, setActiveTab] = useState("ffmpeg");
         const [connectionStatus, setConnectionStatus] = useState({ testing: false, message: "", success: null });
+        const [webdavConnectionStatus, setWebdavConnectionStatus] = useState({ testing: false, message: "", success: null });
 
         const updateConfig = (path, value) => {
           const newConfig = { ...config };
@@ -1502,7 +2342,7 @@
 
         return (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 rounded-lg w-2/3 max-h-[80vh] overflow-hidden flex flex-col">
+            <div className="bg-gray-800 rounded-lg w-3/4 max-h-[90vh] overflow-hidden flex flex-col">
               {/* Header */}
               <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
                 <h2 className="text-xl font-bold">⚙️ Settings</h2>
@@ -1516,8 +2356,8 @@
                 <button onClick={() => setActiveTab("ffmpeg")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "ffmpeg" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
                   🎬 FFmpeg
                 </button>
-                <button onClick={() => setActiveTab("paths")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "paths" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
-                  📁 Paths
+                <button onClick={() => setActiveTab("remote")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "remote" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
+                  🌐 Remote Server
                 </button>
                 <button onClick={() => setActiveTab("storage")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "storage" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
                   💾 Storage
@@ -1528,10 +2368,13 @@
                 <button onClick={() => setActiveTab("ui")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "ui" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
                   🎨 UI
                 </button>
+                <button onClick={() => setActiveTab("cache")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "cache" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
+                  🗄️ Cache
+                </button>
               </div>
 
               {/* Content */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+              <div className="h-[650px] overflow-y-auto p-6 space-y-6">
                 {activeTab === "ffmpeg" && (
                   <>
                     {/* GPU Settings */}
@@ -1641,31 +2484,7 @@
                             <p className="text-xs text-gray-400 mt-1">0-4, augmente compression (3 recommandé)</p>
                           </div>
 
-                          <div>
-                            <label className="flex items-center space-x-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={config.ffmpeg?.spatial_aq !== false}
-                                onChange={(e) => updateConfigNested("ffmpeg", "spatial_aq", e.target.checked)}
-                                className="form-checkbox h-5 w-5 text-blue-600"
-                              />
-                              <span className="text-sm text-gray-300">Spatial AQ (Adaptive Quantization)</span>
-                            </label>
-                            <p className="text-xs text-gray-400 mt-1">Adapte débit selon complexité spatiale</p>
-                          </div>
-
-                          <div>
-                            <label className="flex items-center space-x-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={config.ffmpeg?.temporal_aq !== false}
-                                onChange={(e) => updateConfigNested("ffmpeg", "temporal_aq", e.target.checked)}
-                                className="form-checkbox h-5 w-5 text-blue-600"
-                              />
-                              <span className="text-sm text-gray-300">Temporal AQ</span>
-                            </label>
-                            <p className="text-xs text-gray-400 mt-1">Adapte débit selon complexité temporelle</p>
-                          </div>
+    
 
                           <div>
                             <label className="block text-sm text-gray-300 mb-2">AQ Strength</label>
@@ -1679,6 +2498,9 @@
                             />
                             <p className="text-xs text-gray-400 mt-1">1-15, force de quantification adaptative (8 recommandé)</p>
                           </div>
+
+
+
 
                           <div>
                             <label className="block text-sm text-gray-300 mb-2">B-Frame Ref Mode</label>
@@ -1706,6 +2528,31 @@
                               <option value="fullres">Full Resolution (meilleure qualité) - Recommandé</option>
                             </select>
                             <p className="text-xs text-gray-400 mt-1">Mode multi-passes pour meilleure qualité</p>
+                          </div>
+
+                          <div>
+                            <label className="flex items-center space-x-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={config.ffmpeg?.temporal_aq !== false}
+                                onChange={(e) => updateConfigNested("ffmpeg", "temporal_aq", e.target.checked)}
+                                className="form-checkbox h-5 w-5 text-blue-600"
+                              />
+                              <span className="text-sm text-gray-300">Temporal AQ</span>
+                            </label>
+                            <p className="text-xs text-gray-400 mt-1">Adapte débit selon complexité temporelle</p>
+                          </div>
+                           <div>
+                            <label className="flex items-center space-x-2 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={config.ffmpeg?.spatial_aq !== false}
+                                onChange={(e) => updateConfigNested("ffmpeg", "spatial_aq", e.target.checked)}
+                                className="form-checkbox h-5 w-5 text-blue-600"
+                              />
+                              <span className="text-sm text-gray-300">Spatial AQ (Adaptive Quantization)</span>
+                            </label>
+                            <p className="text-xs text-gray-400 mt-1">Adapte débit selon complexité spatiale</p>
                           </div>
                         </div>
 
@@ -1826,65 +2673,256 @@
                   </>
                 )}
 
-                {activeTab === "paths" && (
+                {activeTab === "remote" && (
                   <>
                     <div className="space-y-4">
-                      <h3 className="text-lg font-semibold text-white">Remote Server Paths</h3>
-
+                      <h3 className="text-lg font-semibold text-white">Remote Server Configuration</h3>
+                      
+                      {/* Transfer Mode at Top */}
                       <div>
-                        <label className="block text-sm text-gray-300 mb-2">Remote Host</label>
-                        <input
-                          type="text"
-                          value={config.remote_host || ""}
-                          onChange={(e) => updateConfig("remote_host", e.target.value)}
+                        <label className="block text-sm text-gray-300 mb-2">Transfer Mode</label>
+                        <select
+                          value={config.webdav_transfer_mode || "auto"}
+                          onChange={(e) => updateConfig("webdav_transfer_mode", e.target.value)}
                           className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          placeholder="ds10256.seedhost.eu"
-                        />
+                        >
+                          <option value="prefer_webdav">Prefer WebDAV with SFTP fallback</option> 
+                          <option value="auto">Mixed (WebDAV download, SFTP upload)</option>
+                          <option value="webdav">WebDAV only</option>
+                          <option value="sftp">SFTP only</option>
+                        </select>
+                        <p className="text-xs text-gray-400 mt-1">
+                          <span className="font-semibold">Prefer WebDAV with SFTP fallback (recommended):</span> Uses WebDAV for fast downloads and SFTP for backup protection
+                        </p>
                       </div>
+
+                      {/* WebDAV Configuration */}
+                      <div className="pt-4 border-t border-gray-700">
+                        <h4 className="text-md font-semibold text-white mb-3">WebDAV Settings</h4>
+                        
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">WebDAV URL</label>
+                          <input
+                            type="text"
+                            value={config.webdav_url || ""}
+                            onChange={(e) => updateConfig("webdav_url", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="http://your-server.com:port"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">Full URL including protocol and port (e.g., http://192.168.1.100:8080)</p>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <div>
+                            <label className="block text-sm text-gray-300 mb-2">Username</label>
+                            <input
+                              type="text"
+                              value={config.webdav_username || ""}
+                              onChange={(e) => updateConfig("webdav_username", e.target.value)}
+                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm text-gray-300 mb-2">Password</label>
+                            <input
+                              type="password"
+                              value={config.webdav_password || ""}
+                              onChange={(e) => updateConfig("webdav_password", e.target.value)}
+                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <label className="block text-sm text-gray-300 mb-2">WebDAV Base Path</label>
+                          <input
+                            type="text"
+                            value={config.webdav_path || "/"}
+                            onChange={(e) => updateConfig("webdav_path", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="/"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">Base path on WebDAV server (usually "/" for root)</p>
+                        </div>
+
+                        {/* Test WebDAV Connection Button */}
+                        <div className="pt-4">
+                          <button 
+                            onClick={async () => {
+                              setWebdavConnectionStatus({ testing: true, message: "Testing WebDAV connection...", success: null });
+                              try {
+                                // Save config first
+                                await window.electronAPI.configSaveUserConfig(config);
+                                
+                                // Test WebDAV connection
+                                const result = await window.electronAPI.testWebdavConnection();
+                                
+                                if (result.success) {
+                                  setWebdavConnectionStatus({
+                                    testing: false,
+                                    message: "✅ WebDAV connection successful!",
+                                    success: true,
+                                  });
+                                } else {
+                                  setWebdavConnectionStatus({
+                                    testing: false,
+                                    message: `❌ WebDAV connection failed: ${result.error}`,
+                                    success: false,
+                                  });
+                                }
+                              } catch (error) {
+                                setWebdavConnectionStatus({
+                                  testing: false,
+                                  message: `❌ Error: ${error.message}`,
+                                  success: false,
+                                });
+                              }
+                              
+                              setTimeout(() => {
+                                setWebdavConnectionStatus({ testing: false, message: "", success: null });
+                              }, 5000);
+                            }}
+                            disabled={webdavConnectionStatus.testing} 
+                            className={`btn-primary w-full ${webdavConnectionStatus.testing ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            {webdavConnectionStatus.testing ? "🔄 Testing..." : "🌐 Test WebDAV Connection"}
+                          </button>
+                          {webdavConnectionStatus.message && (
+                            <p className={`mt-2 text-sm ${webdavConnectionStatus.success ? "text-green-400" : webdavConnectionStatus.success === false ? "text-red-400" : "text-gray-400"}`}>
+                              {webdavConnectionStatus.message}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* SFTP Configuration (for upload in auto mode) */}
+                      <div className="pt-4 border-t border-gray-700">
+                        <h4 className="text-md font-semibold text-white mb-3">SFTP Settings</h4>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">SFTP Host</label>
+                          <input
+                            type="text"
+                            value={config.remote_host || ""}
+                            onChange={(e) => updateConfig("remote_host", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="ds10256.seedhost.eu"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 mt-4">
+                          <div>
+                            <label className="block text-sm text-gray-300 mb-2">Username</label>
+                            <input
+                              type="text"
+                              value={config.remote_user || ""}
+                              onChange={(e) => updateConfig("remote_user", e.target.value)}
+                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            />
+                          </div>
+
+                          <div>
+                            <label className="block text-sm text-gray-300 mb-2">Password</label>
+                            <input
+                              type="password"
+                              value={config.remote_password || ""}
+                              onChange={(e) => updateConfig("remote_password", e.target.value)}
+                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="mt-4">
+                          <label className="block text-sm text-gray-300 mb-2">Remote Library Path</label>
+                          <input
+                            type="text"
+                            value={config.remote_path || ""}
+                            onChange={(e) => updateConfig("remote_path", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="/home/user/library"
+                          />
+                        </div>
+
+                        {/* Test SFTP Connection Button */}
+                        <div className="pt-4">
+                          <button 
+                            onClick={testConnection} 
+                            disabled={connectionStatus.testing} 
+                            className={`btn-primary w-full ${connectionStatus.testing ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            {connectionStatus.testing ? "🔄 Testing..." : "🔌 Test SFTP Connection"}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {activeTab === "storage" && (
+                  <>
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold text-white">File Retention Options</h3>
+
+                      <div className="space-y-3">
+                        <label className="flex items-center cursor-pointer">
+                          <input type="checkbox" checked={config.advanced?.keep_original || false} onChange={(e) => updateConfig("advanced.keep_original", e.target.checked)} className="mr-2" />
+                          <span className="text-sm text-gray-300">Keep original source files locally</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Original files will be kept in backup directory after encoding</p>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input type="checkbox" checked={config.advanced?.keep_encoded || false} onChange={(e) => updateConfig("advanced.keep_encoded", e.target.checked)} className="mr-2" />
+                          <span className="text-sm text-gray-300">Keep encoded files locally</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Encoded files will be kept in temp directory after upload</p>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input type="checkbox" checked={config.advanced?.create_backups !== false} onChange={(e) => updateConfig("advanced.create_backups", e.target.checked)} className="mr-2" />
+                          <span className="text-sm text-gray-300">Create backups on server before replacing</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Original file on server will be renamed with .bak extension</p>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.skip_hevc_reencode || false}
+                            onChange={(e) => updateConfig("advanced.skip_hevc_reencode", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">Skip re-encoding HEVC/x265 files</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Files already in HEVC format will be copied without re-encoding (faster but no size reduction)</p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                      <h3 className="text-lg font-semibold text-white">Cleanup Settings</h3>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">Username</label>
+                          <label className="block text-sm text-gray-300 mb-2">Auto-cleanup old jobs (days)</label>
                           <input
-                            type="text"
-                            value={config.remote_user || ""}
-                            onChange={(e) => updateConfig("remote_user", e.target.value)}
+                            type="number"
+                            min="1"
+                            max="365"
+                            value={config.cleanup_old_jobs_days || 30}
+                            onChange={(e) => updateConfig("cleanup_old_jobs_days", parseInt(e.target.value))}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">Password</label>
+                          <label className="block text-sm text-gray-300 mb-2">Auto-cleanup progress history (days)</label>
                           <input
-                            type="password"
-                            value={config.remote_password || ""}
-                            onChange={(e) => updateConfig("remote_password", e.target.value)}
+                            type="number"
+                            min="1"
+                            max="999"
+                            value={config.cleanup_old_progress_days || 365}
+                            onChange={(e) => updateConfig("cleanup_old_progress_days", parseInt(e.target.value))}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
                         </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm text-gray-300 mb-2">Remote Library Path</label>
-                        <input
-                          type="text"
-                          value={config.remote_path || ""}
-                          onChange={(e) => updateConfig("remote_path", e.target.value)}
-                          className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          placeholder="/home/user/library"
-                        />
-                      </div>
-
-                      {/* Test Connection Button */}
-                      <div className="pt-4">
-                        <button onClick={testConnection} disabled={connectionStatus.testing} className={`btn-primary w-full ${connectionStatus.testing ? "opacity-50 cursor-not-allowed" : ""}`}>
-                          {connectionStatus.testing ? "🔄 Testing..." : "🔌 Test SFTP Connection"}
-                        </button>
-                        {connectionStatus.message && (
-                          <p className={`mt-2 text-sm ${connectionStatus.success ? "text-green-400" : connectionStatus.success === false ? "text-red-400" : "text-gray-400"}`}>
-                            {connectionStatus.message}
-                          </p>
-                        )}
                       </div>
                     </div>
 
@@ -1955,75 +2993,6 @@
                           </button>
                         </div>
                         <p className="text-xs text-gray-400 mt-1">Where original files are backed up</p>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {activeTab === "storage" && (
-                  <>
-                    <div className="space-y-4">
-                      <h3 className="text-lg font-semibold text-white">File Retention Options</h3>
-
-                      <div className="space-y-3">
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={config.advanced?.keep_original || false} onChange={(e) => updateConfig("advanced.keep_original", e.target.checked)} className="mr-2" />
-                          <span className="text-sm text-gray-300">Keep original source files locally</span>
-                        </label>
-                        <p className="text-xs text-gray-400 ml-6">Original files will be kept in backup directory after encoding</p>
-
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={config.advanced?.keep_encoded || false} onChange={(e) => updateConfig("advanced.keep_encoded", e.target.checked)} className="mr-2" />
-                          <span className="text-sm text-gray-300">Keep encoded files locally</span>
-                        </label>
-                        <p className="text-xs text-gray-400 ml-6">Encoded files will be kept in temp directory after upload</p>
-
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={config.advanced?.create_backups !== false} onChange={(e) => updateConfig("advanced.create_backups", e.target.checked)} className="mr-2" />
-                          <span className="text-sm text-gray-300">Create backups on server before replacing</span>
-                        </label>
-                        <p className="text-xs text-gray-400 ml-6">Original file on server will be renamed with .bak extension</p>
-
-                        <label className="flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={config.advanced?.skip_hevc_reencode || false}
-                            onChange={(e) => updateConfig("advanced.skip_hevc_reencode", e.target.checked)}
-                            className="mr-2"
-                          />
-                          <span className="text-sm text-gray-300">Skip re-encoding HEVC/x265 files</span>
-                        </label>
-                        <p className="text-xs text-gray-400 ml-6">Files already in HEVC format will be copied without re-encoding (faster but no size reduction)</p>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 pt-4 border-t border-gray-700">
-                      <h3 className="text-lg font-semibold text-white">Cleanup Settings</h3>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-2">Auto-cleanup old jobs (days)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="365"
-                            value={config.cleanup_old_jobs_days || 30}
-                            onChange={(e) => updateConfig("cleanup_old_jobs_days", parseInt(e.target.value))}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-2">Auto-cleanup progress history (days)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="999"
-                            value={config.cleanup_old_progress_days || 365}
-                            onChange={(e) => updateConfig("cleanup_old_progress_days", parseInt(e.target.value))}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          />
-                        </div>
                       </div>
                     </div>
                   </>
@@ -2158,6 +3127,16 @@
                           <span className="text-sm text-gray-300">Show completion notifications</span>
                         </label>
 
+                        <label className="flex items-center cursor-pointer">
+                          <input 
+                            type="checkbox" 
+                            checked={config.ui?.hide_empty_folders !== false} 
+                            onChange={(e) => updateConfig("ui.hide_empty_folders", e.target.checked)} 
+                            className="mr-2" 
+                          />
+                          <span className="text-sm text-gray-300">Hide empty folders (no video files)</span>
+                        </label>
+
                         <div>
                           <label className="block text-sm text-gray-300 mb-2">Auto-refresh interval (ms)</label>
                           <input
@@ -2172,6 +3151,12 @@
                         </div>
                       </div>
                     </div>
+                  </>
+                )}
+
+                {activeTab === "cache" && (
+                  <>
+                    <CacheManager onClose={onClose} />
                   </>
                 )}
               </div>
@@ -2201,12 +3186,13 @@
         const [encodedFiles, setEncodedFiles] = useState([]);
         const [isConnected, setIsConnected] = useState(false);
         const [logs, setLogs] = useState([]);
+        const [backendLogs, setBackendLogs] = useState([]);
         const [queueStatus, setQueueStatus] = useState({ isRunning: false, isPaused: false, loading: false });
         const [showSettings, setShowSettings] = useState(false);
         const [userConfig, setUserConfig] = useState(null);
         const [isLoading, setIsLoading] = useState(true);
         const [shutdownWhenFinished, setShutdownWhenFinished] = useState(false);
-        const [rightPanelTab, setRightPanelTab] = useState("queue"); // 'queue' or 'history'
+        const [rightPanelTab, setRightPanelTab] = useState("queue"); // 'queue', 'history', or 'logs'
 
         // Use ref to track shutdown state in event handlers
         const shutdownWhenFinishedRef = React.useRef(shutdownWhenFinished);
@@ -2239,6 +3225,9 @@
                 addLog(`SFTP connection error: ${error.message}`, "warning");
               }
 
+              // WebDAV connection is handled by FileTree component
+              // No need to connect here to avoid duplicate connections
+
               // Small delay to show the loading animation
               setTimeout(() => setIsLoading(false), 1000);
             } catch (error) {
@@ -2266,6 +3255,15 @@
             }));
           });
 
+          // Listen for backend logs
+          window.electronAPI.onLog((logData) => {
+            setBackendLogs(prev => {
+              const newLogs = [...prev, logData];
+              // Keep only last 500 logs to prevent memory issues
+              return newLogs.slice(-500);
+            });
+          });
+
           window.electronAPI.onJobUpdate(async (data) => {
             console.log("Job update received:", data);
             if (data.status === "failed") {
@@ -2282,6 +3280,20 @@
             await loadJobs();
             await loadStats();
             await loadEncodedFiles();
+
+            // Sync cache after upload completion
+            try {
+              console.log('Job completed, syncing cache...');
+              // Wait a moment for the file to be fully uploaded
+              await new Promise(resolve => setTimeout(resolve, 1000));
+              // Trigger cache sync via main process to ensure it happens in FileTree
+              await window.electronAPI.webdavConnect(); // Ensure connected
+              if (window.electronAPI.syncCache) {
+                await window.electronAPI.syncCache();
+              }
+            } catch (error) {
+              console.error('Error syncing cache after job completion:', error);
+            }
 
             // Check if shutdown is enabled and queue is finished
             if (shutdownWhenFinishedRef.current) {
@@ -2434,12 +3446,31 @@
           try {
             const result = await window.electronAPI.configLoadUserConfig();
             if (result.success && result.config) {
-              setUserConfig(result.config);
+              // Ensure UI preferences have default values
+              const configWithDefaults = {
+                ...result.config,
+                ui: {
+                  show_notifications: true,
+                  auto_refresh_interval: 5000,
+                  hide_empty_folders: true, // Default to hiding empty folders
+                  ...result.config.ui
+                }
+              };
+              setUserConfig(configWithDefaults);
             } else {
               // Fallback to default config if loading fails
               const localConfig = await window.electronAPI.configGet();
               if (localConfig.success) {
-                setUserConfig(localConfig.config);
+                const configWithDefaults = {
+                  ...localConfig.config,
+                  ui: {
+                    show_notifications: true,
+                    auto_refresh_interval: 5000,
+                    hide_empty_folders: true,
+                    ...localConfig.config.ui
+                  }
+                };
+                setUserConfig(configWithDefaults);
               }
             }
           } catch (error) {
@@ -2448,7 +3479,16 @@
             try {
               const localConfig = await window.electronAPI.configGet();
               if (localConfig.success) {
-                setUserConfig(localConfig.config);
+                const configWithDefaults = {
+                  ...localConfig.config,
+                  ui: {
+                    show_notifications: true,
+                    auto_refresh_interval: 5000,
+                    hide_empty_folders: true,
+                    ...localConfig.config.ui
+                  }
+                };
+                setUserConfig(configWithDefaults);
               }
             } catch (e) {
               console.error("Failed to load local config:", e);
@@ -2595,7 +3635,7 @@
             <div className="flex-1 flex overflow-hidden">
               {/* Left Panel - File Tree */}
               <div className="w-1/2 p-4">
-                <FileTree onAddToQueue={handleAddToQueue} encodedFiles={encodedFiles} />
+                <FileTree onAddToQueue={handleAddToQueue} encodedFiles={encodedFiles} userConfig={userConfig} />
               </div>
 
               {/* Right Panel - Queue / History with Tabs */}
@@ -2618,6 +3658,14 @@
                   >
                     📜 Historique
                   </button>
+                  <button
+                    onClick={() => setRightPanelTab("logs")}
+                    className={`flex-1 py-2 px-4 rounded-t-lg font-semibold transition-colors ${
+                      rightPanelTab === "logs" ? "bg-gray-800 text-white border-b-2 border-blue-500" : "bg-gray-700 text-gray-400 hover:bg-gray-650"
+                    }`}
+                  >
+                    📝 Logs
+                  </button>
                 </div>
 
                 {/* Tab Content */}
@@ -2637,9 +3685,54 @@
                       setJobs={setJobs}
                       loadStats={loadStats}
                     />
-                  ) : (
+                  ) : rightPanelTab === "history" ? (
                     <HistoryTable jobs={jobs} />
-                  )}
+                  ) : rightPanelTab === "logs" ? (
+                    <div className="bg-gray-900 border border-gray-700 rounded-lg h-full overflow-hidden flex flex-col">
+                      <div className="p-3 border-b border-gray-700 flex justify-between items-center">
+                        <h3 className="text-sm font-semibold">Backend Logs</h3>
+                        <button 
+                          onClick={() => setBackendLogs([])} 
+                          className="text-xs px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded"
+                        >
+                          Clear
+                        </button>
+                      </div>
+                      <div 
+                        className="flex-1 overflow-y-auto scrollbar-thin p-3"
+                        ref={(el) => {
+                          if (el && backendLogs.length > 0) {
+                            // Auto-scroll to bottom when new logs arrive
+                            el.scrollTop = el.scrollHeight;
+                          }
+                        }}
+                      >
+                        <div className="space-y-1 font-mono text-xs">
+                          {backendLogs.map((log, index) => (
+                            <div 
+                              key={index} 
+                              className={`flex space-x-2 ${
+                                log.level === 'error' ? 'text-red-400' : 
+                                log.level === 'warn' ? 'text-yellow-400' : 
+                                'text-gray-300'
+                              }`}
+                            >
+                              <span className="text-gray-500">{new Date(log.timestamp).toLocaleTimeString()}</span>
+                              <span className={`font-semibold ${
+                                log.level === 'error' ? 'text-red-500' : 
+                                log.level === 'warn' ? 'text-yellow-500' : 
+                                'text-blue-500'
+                              }`}>[{log.level.toUpperCase()}]</span>
+                              <span className="flex-1">{log.message}</span>
+                            </div>
+                          ))}
+                          {backendLogs.length === 0 && (
+                            <div className="text-gray-500 text-center py-8">No logs yet</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </div>

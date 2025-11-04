@@ -3,12 +3,27 @@ const { contextBridge, ipcRenderer } = require("electron");
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld("electronAPI", {
-  // SFTP operations
+  // WebDAV Explorer operations (new remote file browser)
+  webdavConnect: () => ipcRenderer.invoke("webdav:connect"),
+  webdavDisconnect: () => ipcRenderer.invoke("webdav:disconnect"),
+  webdavListDirectory: (remotePath, includeVideoInfo) => ipcRenderer.invoke("webdav:listDirectory", remotePath, includeVideoInfo),
+  webdavGetFolderStats: (remotePath) => ipcRenderer.invoke("webdav:getFolderStats", remotePath),
+  webdavScanFolderRecursive: (remotePath) => ipcRenderer.invoke("webdav:scanFolderRecursive", remotePath),
+  webdavGetFileInfo: (remotePath) => ipcRenderer.invoke("webdav:getFileInfo", remotePath),
+  
+  // WebDAV cache operations
+  syncCache: () => ipcRenderer.invoke("webdav:syncCache"),
+  buildCompleteCache: () => ipcRenderer.invoke("webdav:buildCompleteCache"),
+  onCacheProgress: (callback) => {
+    ipcRenderer.on("webdav:cacheProgress", (event, data) => callback(data));
+  },
+  
+  // Legacy WebDAV operations
+  testWebdavConnection: () => ipcRenderer.invoke("webdav:testConnection"),
+
+  // SFTP operations (for transfer manager during encoding)
   sftpConnect: () => ipcRenderer.invoke("sftp:connect"),
   sftpDisconnect: () => ipcRenderer.invoke("sftp:disconnect"),
-  sftpListFiles: (remotePath) => ipcRenderer.invoke("sftp:listFiles", remotePath),
-  sftpScanFolder: (remotePath) => ipcRenderer.invoke("sftp:scanFolder", remotePath),
-  sftpGetDirectorySize: (remotePath) => ipcRenderer.invoke("sftp:getDirectorySize", remotePath),
 
   // Queue operations
   queueAddJob: (filePath, fileInfo) => ipcRenderer.invoke("queue:addJob", filePath, fileInfo),
@@ -60,6 +75,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   onQueueError: (callback) => {
     ipcRenderer.on("queue:error", (event, error) => callback(error));
+  },
+
+  // WebDAV cache sync trigger
+  onWebdavTriggerCacheSync: (callback) => {
+    ipcRenderer.on("webdav:triggerCacheSync", () => callback());
+  },
+
+  // Log messages from backend
+  onLog: (callback) => {
+    ipcRenderer.on("log:message", (event, data) => callback(data));
   },
 
   // Remove listeners

@@ -2,7 +2,7 @@ const { EventEmitter } = require("events");
 const path = require("path");
 const fs = require("fs-extra");
 const { VideoEncoder } = require("./encode");
-const { createJob, updateJob, getJobsByStatus, markJobStarted, markJobCompleted, markJobFailed, getAllJobs, deleteJob, getJobStats } = require("./db");
+const { createJob, updateJob, getJobsByStatus, markJobStarted, markJobCompleted, markJobFailed, getAllJobs, deleteJob, removeFromQueue, getJobStats } = require("./db");
 const { logger, ensureSpaceAvailable, calculateFileHash, createBackupPath, formatBytes, retry, sleep, safeFileMove, safeFileDelete } = require("./utils");
 
 class QueueManager extends EventEmitter {
@@ -101,9 +101,16 @@ class QueueManager extends EventEmitter {
 
   // Generate new filename with encoding parameters
   generateEncodedFilename(originalPath, codecAfter) {
-    const parsedPath = path.parse(originalPath);
-    const baseName = parsedPath.name;
-    const ext = parsedPath.ext;
+    // Normalize path to use forward slashes (Unix style) for server paths
+    const normalizedPath = originalPath.replace(/\\/g, "/");
+
+    const lastSlash = normalizedPath.lastIndexOf("/");
+    const dir = lastSlash >= 0 ? normalizedPath.substring(0, lastSlash) : "";
+    const filename = lastSlash >= 0 ? normalizedPath.substring(lastSlash + 1) : normalizedPath;
+
+    const lastDot = filename.lastIndexOf(".");
+    const baseName = lastDot >= 0 ? filename.substring(0, lastDot) : filename;
+    const ext = lastDot >= 0 ? filename.substring(lastDot) : "";
 
     // Remove old codec tags (x264, x265, h264, h265, hevc, etc.)
     let cleanName = baseName
@@ -114,17 +121,18 @@ class QueueManager extends EventEmitter {
     // Get encoding parameters
     const isGPU = codecAfter.includes("nvenc") || codecAfter.includes("_nvenc");
     const codecTag = isGPU ? "hevc_nvenc" : "x265";
-    
+
     // Get quality setting
     const cq = this.config.ffmpeg?.cq || this.config.cq || 24;
-    const preset = isGPU ? (this.config.ffmpeg?.encode_preset || this.config.encode_preset || "p7") : (this.config.ffmpeg?.cpu_preset || this.config.cpu_preset || "medium");
+    const preset = isGPU ? this.config.ffmpeg?.encode_preset || this.config.encode_preset || "p7" : this.config.ffmpeg?.cpu_preset || this.config.cpu_preset || "medium";
 
     // Build new filename with encoding info
     const encodingInfo = isGPU ? `[${codecTag}-${preset}-cq${cq}]` : `[${codecTag}-${preset}-crf${cq}]`;
-    
+
     const newName = `${cleanName} ${encodingInfo}${ext}`;
-    
-    return path.join(parsedPath.dir, newName);
+
+    // Always return with forward slashes for server paths
+    return dir ? `${dir}/${newName}` : newName;
   }
 
   pause() {
@@ -170,10 +178,11 @@ class QueueManager extends EventEmitter {
         audio: fileInfo.audio || 0,
         audioCodec: fileInfo.audioCodec || null,
         subtitles: fileInfo.subtitles || 0,
+        pause_before_upload: fileInfo.pauseBeforeUpload ? 1 : 0,
       };
 
       const jobId = await createJob(jobData);
-      logger.info(`Added job ${jobId}: ${filePath}`);
+      logger.info(`Added job ${jobId}: ${filePath} (pause before upload: ${jobData.pause_before_upload})`);
 
       this.emit("jobAdded", { id: jobId, ...jobData });
       return jobId;
@@ -204,7 +213,8 @@ class QueueManager extends EventEmitter {
         await this.cleanupJobFiles(job);
       }
 
-      await deleteJob(jobId);
+      // Use removeFromQueue instead of deleteJob - keeps completed jobs in DB
+      await removeFromQueue(jobId);
       logger.info(`Removed job ${jobId}`);
 
       this.emit("jobRemoved", { id: jobId });
@@ -247,13 +257,80 @@ class QueueManager extends EventEmitter {
       });
 
       if (this.isPaused) {
-        this.isPaused = false;
+        return;
       }
 
       logger.info(`Resumed job ${jobId}`);
       this.emit("jobResumed", { id: jobId });
+      this.processQueue();
     } catch (error) {
       logger.error("Failed to resume job:", error);
+      throw error;
+    }
+  }
+
+  async approveEncodedFile(jobId) {
+    try {
+      const job = await this.getJob(jobId);
+
+      if (!job) {
+        throw new Error("Job not found");
+      }
+
+      if (job.status !== "awaiting_approval") {
+        throw new Error("Job is not awaiting approval");
+      }
+
+      logger.info(`[APPROVE] Job ${jobId} approved for upload`);
+
+      await updateJob(jobId, {
+        status: "ready_upload",
+      });
+
+      this.emit("jobApproved", { id: jobId });
+      this.processQueue();
+
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to approve job:", error);
+      throw error;
+    }
+  }
+
+  async rejectEncodedFile(jobId) {
+    try {
+      const job = await this.getJob(jobId);
+
+      if (!job) {
+        throw new Error("Job not found");
+      }
+
+      if (job.status !== "awaiting_approval") {
+        throw new Error("Job is not awaiting approval");
+      }
+
+      logger.info(`[REJECT] Job ${jobId} rejected, will re-encode`);
+
+      // Delete the encoded file
+      const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+      await safeFileDelete(encodedPath);
+
+      // Reset to ready_encode status to try encoding again
+      await updateJob(jobId, {
+        status: "ready_encode",
+        codec_after: null,
+        size_after: null,
+        bitrate_after: null,
+        duration_after: null,
+        error: null,
+      });
+
+      this.emit("jobRejected", { id: jobId });
+      this.processQueue();
+
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to reject job:", error);
       throw error;
     }
   }
@@ -319,6 +396,14 @@ class QueueManager extends EventEmitter {
   async getJob(jobId) {
     const jobs = await getAllJobs();
     return jobs.find((job) => job.id === jobId);
+  }
+
+  // Update runtime settings
+  updateSettings(settings) {
+    if (settings.blockLargerEncoded !== undefined) {
+      this.config.blockLargerEncoded = settings.blockLargerEncoded;
+      logger.info(`[SETTINGS] Block larger encoded files: ${settings.blockLargerEncoded}`);
+    }
   }
 
   async getQueueStats() {
@@ -456,13 +541,7 @@ class QueueManager extends EventEmitter {
           logger.info(`[ENCODE] Copying file: ${localPath} -> ${encodedPath}`);
           await fs.copy(localPath, encodedPath);
 
-          logger.info(`[ENCODE] File copied, updating job status to ready_upload`);
-
-          // Update to ready for upload
-          await updateJob(job.id, {
-            status: "ready_upload",
-            codec_after: codecBefore,
-          });
+          logger.info(`[ENCODE] File copied, updating job status`);
 
           await this.updateProgressFile(job, {
             originalSize: videoInfo.size,
@@ -475,9 +554,35 @@ class QueueManager extends EventEmitter {
             reason: "Already HEVC",
           });
 
-          logger.info(`[ENCODE] Job ${job.id} completed (skipped encoding)`);
-          this.encodingJob = null;
-          this.emit("jobUpdate", { id: job.id, status: "ready_upload" });
+          // Check if we should pause before upload for manual review (even for skipped files)
+          if (job.pause_before_upload) {
+            logger.info(`[ENCODE] Job ${job.id} (skipped) requires manual review before upload`);
+
+            await updateJob(job.id, {
+              status: "awaiting_approval",
+              codec_after: codecBefore,
+              size_after: videoInfo.size,
+              bitrate_after: videoInfo.bitrate,
+              duration_after: videoInfo.duration,
+            });
+
+            this.encodingJob = null;
+            this.emit("jobUpdate", { id: job.id, status: "awaiting_approval" });
+            logger.info(`[ENCODE] Job ${job.id} (skipped) paused for manual approval`);
+          } else {
+            // Update to ready for upload
+            await updateJob(job.id, {
+              status: "ready_upload",
+              codec_after: codecBefore,
+              size_after: videoInfo.size,
+              bitrate_after: videoInfo.bitrate,
+              duration_after: videoInfo.duration,
+            });
+
+            logger.info(`[ENCODE] Job ${job.id} completed (skipped encoding)`);
+            this.encodingJob = null;
+            this.emit("jobUpdate", { id: job.id, status: "ready_upload" });
+          }
           return;
         }
 
@@ -498,8 +603,10 @@ class QueueManager extends EventEmitter {
         // Determine actual codec used (GPU or CPU)
         const codecAfter = this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)";
 
-        // Update progress file
+        // Get encoded file metadata
         const encodedInfo = await this.encoder.getVideoInfo(result.outputPath);
+
+        // Update progress file
         await this.updateProgressFile(job, {
           originalSize: videoInfo.size,
           encodedSize: encodedInfo.size,
@@ -509,13 +616,66 @@ class QueueManager extends EventEmitter {
           encodingTime: (Date.now() - new Date(job.started_at)) / 1000,
         });
 
-        // Update job status to ready for upload
-        await updateJob(job.id, {
-          status: "ready_upload",
-          codec_after: codecAfter,
-        });
+        // Save encoded file to backups/encoded/ directory with full directory structure
+        // Remove leading slash and normalize path
+        const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+        const encodedBackupPath = path.join(this.config.local_backup, "encoded", normalizedPath);
+        await fs.ensureDir(path.dirname(encodedBackupPath));
+        await fs.copy(result.outputPath, encodedBackupPath);
+        logger.info(`Saved encoded file: ${encodedBackupPath}`);
 
-        this.encodingJob = null;
+        // Check if we should pause before upload for manual review
+        // Check if encoded file is larger than original (if blocking is enabled)
+        if (this.config.blockLargerEncoded !== false && encodedInfo.size >= job.size) {
+          const sizeDiff = encodedInfo.size - job.size;
+          const percentIncrease = ((sizeDiff / job.size) * 100).toFixed(1);
+
+          logger.warn(`[ENCODE] Job ${job.id}: Encoded file is LARGER than original!`);
+          logger.warn(`[ENCODE] Original: ${formatBytes(job.size)}, Encoded: ${formatBytes(encodedInfo.size)} (+${percentIncrease}%)`);
+
+          // Mark job as failed with specific error
+          await markJobFailed(job.id, new Error(`Encoded file is ${percentIncrease}% larger than original (${formatBytes(encodedInfo.size)} vs ${formatBytes(job.size)}). Upload blocked.`));
+
+          this.encodingJob = null;
+          this.emit("jobUpdate", {
+            id: job.id,
+            status: "failed",
+            error: `Encoded file is larger than original (+${percentIncrease}%). Upload blocked.`,
+          });
+
+          // Keep both files for inspection but don't upload
+          logger.info(`[ENCODE] Keeping files for inspection. Original: ${await this.createBackup(downloadedPath, job)}`);
+
+          return; // Stop here, don't proceed to upload
+        }
+
+        if (job.pause_before_upload) {
+          logger.info(`[ENCODE] Job ${job.id} requires manual review before upload`);
+
+          // Update job with encoded file metadata and set status to awaiting_approval
+          await updateJob(job.id, {
+            status: "awaiting_approval",
+            codec_after: codecAfter,
+            size_after: encodedInfo.size,
+            bitrate_after: encodedInfo.bitrate,
+            duration_after: encodedInfo.duration,
+          });
+
+          this.encodingJob = null;
+          this.emit("jobUpdate", { id: job.id, status: "awaiting_approval" });
+          logger.info(`[ENCODE] Job ${job.id} paused for manual approval`);
+        } else {
+          // Update job status to ready for upload
+          await updateJob(job.id, {
+            status: "ready_upload",
+            codec_after: codecAfter,
+            size_after: encodedInfo.size,
+            bitrate_after: encodedInfo.bitrate,
+            duration_after: encodedInfo.duration,
+          });
+
+          this.encodingJob = null;
+        }
       } catch (error) {
         logger.error(`[ENCODE] Failed job ${job.id}:`, error);
         logger.error(`[ENCODE] Error details:`, error.message || error);
@@ -553,42 +713,34 @@ class QueueManager extends EventEmitter {
       logger.info(`[UPLOAD] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "uploading" });
 
-      // Generate new filename with encoding parameters
-      const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
-      const newFilePath = this.generateEncodedFilename(job.filepath, codecAfter);
-      
-      logger.info(`[UPLOAD] Original: ${job.filepath}`);
-      logger.info(`[UPLOAD] New name: ${newFilePath}`);
+      // Keep original filename - no renaming
+      logger.info(`[UPLOAD] Uploading to: ${job.filepath} (keeping original name)`);
 
-      // Start upload asynchronously
+      // Start upload asynchronously - upload to original path (replaces original file)
       const uploadPromise = this.transferManager
-        .uploadFile(encodedPath, newFilePath, (progress) => {
+        .uploadFile(encodedPath, job.filepath, (progress) => {
           this.handleUploadProgress(job.id, progress);
         })
         .then(async () => {
           logger.info(`[UPLOAD] Completed job ${job.id}`);
           this.uploadingJobs.delete(job.id);
 
-          // Delete the original file's backup (.original.bak) on success
-          try {
-            await this.transferManager.deleteBackupFile(job.filepath);
-          } catch (error) {
-            logger.warn(`Could not delete backup file:`, error);
-          }
+          // Keep the backup file (.original.bak) on server - do NOT delete it
+          logger.info(`[UPLOAD] Original file backed up as: ${job.filepath}.original.bak`);
 
-          // If we renamed the file, also delete the old file (original name) from server
-          if (newFilePath !== job.filepath) {
-            try {
-              logger.info(`[UPLOAD] Deleting original file after rename: ${job.filepath}`);
-              await this.transferManager.deleteFile(job.filepath);
-            } catch (error) {
-              logger.warn(`Could not delete original file after rename:`, error);
-            }
-          }
+          // Calculate local backup paths
+          const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+          const localOriginalPath = path.join(this.config.local_backup, "originals", normalizedPath);
+          const localEncodedPath = path.join(this.config.local_backup, "encoded", normalizedPath);
+          const serverBackupPath = `${job.filepath}.original.bak`;
 
-          // Mark job as completed with actual codec used
+          // Mark job as completed with actual codec used and backup paths
           const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
-          await markJobCompleted(job.id, codecAfter);
+          await markJobCompleted(job.id, codecAfter, {
+            localOriginal: localOriginalPath,
+            localEncoded: localEncodedPath,
+            serverBackup: serverBackupPath,
+          });
           await this.cleanupJobFiles(job);
 
           this.emit("jobComplete", job);
@@ -620,7 +772,10 @@ class QueueManager extends EventEmitter {
   }
 
   async createBackup(originalPath, job) {
-    const backupPath = createBackupPath(job.filepath, this.config.local_backup);
+    // Save original file to backups/originals/ directory with full directory structure
+    // Remove leading slash and normalize path
+    const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+    const backupPath = path.join(this.config.local_backup, "originals", normalizedPath);
 
     await fs.ensureDir(path.dirname(backupPath));
     await fs.copy(originalPath, backupPath);
@@ -637,14 +792,19 @@ class QueueManager extends EventEmitter {
 
   async cleanupJobFiles(job) {
     // Load user config to check storage options
-    let keepOriginal = false;
-    let keepEncoded = false;
+    let keepOriginal = true; // Keep original for quality comparison by default
+    let keepEncoded = true; // Keep encoded for quality comparison by default
 
     try {
       // Load config from local file
       const userConfig = await fs.readJSON("./sharkoder.config.json");
-      keepOriginal = userConfig?.advanced?.keep_original || false;
-      keepEncoded = userConfig?.advanced?.keep_encoded || false;
+      // Allow user to override defaults
+      if (userConfig?.advanced?.keep_original === false) {
+        keepOriginal = false;
+      }
+      if (userConfig?.advanced?.keep_encoded === false) {
+        keepEncoded = false;
+      }
     } catch (error) {
       logger.warn("Failed to load user config for cleanup, using defaults:", error);
     }
@@ -652,12 +812,16 @@ class QueueManager extends EventEmitter {
     const downloadedPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
     const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
+    // Normalize path for backup structure (remove leading slash)
+    const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+
     // Handle downloaded file (original)
     try {
       if (await fs.pathExists(downloadedPath)) {
         if (keepOriginal) {
-          // Move to backup instead of deleting (with retry for locked files)
-          const backupPath = path.join(this.config.local_backup, "originals", path.basename(job.filepath));
+          // Move to backup instead of deleting (with retry for locked files) - preserve directory structure
+          const backupPath = path.join(this.config.local_backup, "originals", normalizedPath);
+          await fs.ensureDir(path.dirname(backupPath));
           const moved = await safeFileMove(downloadedPath, backupPath);
           if (moved) {
             logger.info(`[CLEANUP] Kept original file: ${backupPath}`);
@@ -677,8 +841,9 @@ class QueueManager extends EventEmitter {
     try {
       if (await fs.pathExists(encodedPath)) {
         if (keepEncoded) {
-          // Keep the encoded file in a dedicated folder (with retry for locked files)
-          const keepPath = path.join(this.config.local_backup, "encoded", path.basename(job.filepath));
+          // Keep the encoded file in a dedicated folder (with retry for locked files) - preserve directory structure
+          const keepPath = path.join(this.config.local_backup, "encoded", normalizedPath);
+          await fs.ensureDir(path.dirname(keepPath));
           const moved = await safeFileMove(encodedPath, keepPath);
           if (moved) {
             logger.info(`[CLEANUP] Kept encoded file: ${keepPath}`);

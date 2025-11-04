@@ -6,8 +6,8 @@ const fs = require("fs-extra");
 app.disableHardwareAcceleration();
 
 // Disable disk cache to prevent permission errors
-app.commandLine.appendSwitch('disable-http-cache');
-app.commandLine.appendSwitch('disk-cache-size', '0');
+app.commandLine.appendSwitch("disable-http-cache");
+app.commandLine.appendSwitch("disk-cache-size", "0");
 
 // Backend modules
 const { initDatabase } = require("./backend/db");
@@ -32,25 +32,25 @@ const originalLoggerMethods = {
 };
 
 const sendLogToRenderer = (level, message, ...args) => {
-  const logMessage = typeof message === 'string' ? message : JSON.stringify(message);
-  const additionalData = args.length > 0 ? ' ' + args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ') : '';
-  
+  const logMessage = typeof message === "string" ? message : JSON.stringify(message);
+  const additionalData = args.length > 0 ? " " + args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") : "";
+
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('log:message', {
+    mainWindow.webContents.send("log:message", {
       level,
       message: logMessage + additionalData,
       timestamp: new Date().toISOString(),
     });
   }
-  
+
   // Call original logger method
   originalLoggerMethods[level](message, ...args);
 };
 
 // Override logger methods
-logger.info = (...args) => sendLogToRenderer('info', ...args);
-logger.warn = (...args) => sendLogToRenderer('warn', ...args);
-logger.error = (...args) => sendLogToRenderer('error', ...args);
+logger.info = (...args) => sendLogToRenderer("info", ...args);
+logger.warn = (...args) => sendLogToRenderer("warn", ...args);
+logger.error = (...args) => sendLogToRenderer("error", ...args);
 
 // Initialize app directories
 const initAppDirectories = async () => {
@@ -290,7 +290,7 @@ const setupIpcHandlers = () => {
     try {
       // Load current config
       const userConfig = require("./sharkoder.config.json");
-      
+
       if (!userConfig.webdav_url) {
         return { success: false, error: "WebDAV URL not configured" };
       }
@@ -306,7 +306,7 @@ const setupIpcHandlers = () => {
 
       // Try to connect and list root directory
       const result = await testWebdav.connect();
-      
+
       if (result.success) {
         // Test listing directory to confirm access
         try {
@@ -347,6 +347,17 @@ const setupIpcHandlers = () => {
     }
   });
 
+  ipcMain.handle("queue:deleteJob", async (event, jobId) => {
+    try {
+      const { deleteJob } = require("./backend/db");
+      await deleteJob(jobId);
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to delete job:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle("queue:pauseJob", async (event, jobId) => {
     try {
       await queueManager.pauseJob(jobId);
@@ -373,6 +384,36 @@ const setupIpcHandlers = () => {
       return { success: true };
     } catch (error) {
       logger.error("Failed to retry job:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("queue:approveJob", async (event, jobId) => {
+    try {
+      await queueManager.approveEncodedFile(jobId);
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to approve job:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("queue:rejectJob", async (event, jobId) => {
+    try {
+      await queueManager.rejectEncodedFile(jobId);
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to reject job:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("queue:updateSettings", async (event, settings) => {
+    try {
+      queueManager.updateSettings(settings);
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to update queue settings:", error);
       return { success: false, error: error.message };
     }
   });
@@ -534,21 +575,179 @@ const setupIpcHandlers = () => {
   });
 
   // Play original file from local backup
-  ipcMain.handle("playOriginalFile", async (event, filename) => {
+  ipcMain.handle("playOriginalFile", async (event, filepath) => {
     try {
+      logger.info(`[playOriginalFile] Received filepath: ${filepath}`);
       const config = require("./sharkoder.config.json");
-      const originalPath = path.join(config.local_backup, "originals", filename);
+
+      // Remove leading slash and normalize path
+      const normalizedPath = filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+      const originalPath = path.join(config.local_backup, "originals", normalizedPath);
+      logger.info(`[playOriginalFile] Checking path: ${originalPath}`);
 
       // Check if original backup exists locally
-      if (await fs.pathExists(originalPath)) {
-        await shell.openPath(originalPath);
-        logger.info(`Opened original file from backup: ${originalPath}`);
-        return { success: true };
+      const exists = await fs.pathExists(originalPath);
+      logger.info(`[playOriginalFile] File exists: ${exists}`);
+
+      if (exists) {
+        const result = await shell.openPath(originalPath);
+        logger.info(`[playOriginalFile] shell.openPath result: ${result}`);
+        if (result === "") {
+          logger.info(`Opened original file from backup: ${originalPath}`);
+          return { success: true };
+        } else {
+          throw new Error(`Failed to open file: ${result}`);
+        }
       } else {
-        throw new Error("Original file not found in local backup");
+        throw new Error(`Original file not found: ${originalPath}`);
       }
     } catch (error) {
-      logger.error("Failed to play original file:", error);
+      logger.error(`Failed to play original file: ${error.message}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Play encoded file from local backup
+  ipcMain.handle("playEncodedFile", async (event, filepath) => {
+    try {
+      logger.info(`[playEncodedFile] Received filepath: ${filepath}`);
+      const config = require("./sharkoder.config.json");
+
+      // Remove leading slash and normalize path
+      const normalizedPath = filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+      const encodedPath = path.join(config.local_backup, "encoded", normalizedPath);
+      logger.info(`[playEncodedFile] Checking path: ${encodedPath}`);
+
+      // Check if encoded backup exists locally
+      const exists = await fs.pathExists(encodedPath);
+      logger.info(`[playEncodedFile] File exists: ${exists}`);
+
+      if (exists) {
+        const result = await shell.openPath(encodedPath);
+        logger.info(`[playEncodedFile] shell.openPath result: ${result}`);
+        if (result === "") {
+          logger.info(`Opened encoded file from backup: ${encodedPath}`);
+          return { success: true };
+        } else {
+          throw new Error(`Failed to open file: ${result}`);
+        }
+      } else {
+        throw new Error(`Encoded file not found: ${encodedPath}`);
+      }
+    } catch (error) {
+      logger.error(`Failed to play encoded file: ${error.message}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Restore file handlers
+  ipcMain.handle("restore:fromLocal", async (event, jobId, type) => {
+    try {
+      const { getJob } = require("./backend/db");
+      const job = await getJob(jobId);
+
+      if (!job) {
+        return { success: false, error: "Job not found" };
+      }
+
+      const config = require("./sharkoder.config.json");
+      let sourcePath, destPath;
+
+      if (type === "original") {
+        // Restore from local original backup
+        sourcePath = job.local_original_path;
+      } else if (type === "encoded") {
+        // Restore from local encoded backup
+        sourcePath = job.local_encoded_path;
+      } else {
+        return { success: false, error: "Invalid restore type" };
+      }
+
+      if (!sourcePath || !(await fs.pathExists(sourcePath))) {
+        return { success: false, error: `Local ${type} backup not found` };
+      }
+
+      // Upload back to server at original location
+      await transferManager.uploadFile(sourcePath, job.filepath);
+
+      logger.info(`Restored ${type} file from local backup: ${job.filepath}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to restore from local:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("restore:fromServer", async (event, jobId) => {
+    try {
+      const { getJob } = require("./backend/db");
+      const job = await getJob(jobId);
+
+      if (!job) {
+        return { success: false, error: "Job not found" };
+      }
+
+      const serverBackupPath = job.server_backup_path;
+      if (!serverBackupPath) {
+        return { success: false, error: "Server backup path not found" };
+      }
+
+      // Check if backup exists on server
+      try {
+        await transferManager.stat(serverBackupPath);
+      } catch (error) {
+        return { success: false, error: "Server backup not found" };
+      }
+
+      // Restore: rename .original.bak back to original filename
+      await transferManager.renameFile(serverBackupPath, job.filepath);
+
+      logger.info(`Restored original file from server backup: ${job.filepath}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to restore from server:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("backup:checkExists", async (event, jobId) => {
+    try {
+      const { getJob } = require("./backend/db");
+      const job = await getJob(jobId);
+
+      if (!job) {
+        return { success: false, error: "Job not found" };
+      }
+
+      const exists = {
+        localOriginal: false,
+        localEncoded: false,
+        serverBackup: false,
+      };
+
+      // Check local original
+      if (job.local_original_path) {
+        exists.localOriginal = await fs.pathExists(job.local_original_path);
+      }
+
+      // Check local encoded
+      if (job.local_encoded_path) {
+        exists.localEncoded = await fs.pathExists(job.local_encoded_path);
+      }
+
+      // Check server backup
+      if (job.server_backup_path) {
+        try {
+          await transferManager.stat(job.server_backup_path);
+          exists.serverBackup = true;
+        } catch (error) {
+          exists.serverBackup = false;
+        }
+      }
+
+      return { success: true, exists };
+    } catch (error) {
+      logger.error(`Failed to check backup existence:`, error);
       return { success: false, error: error.message };
     }
   });
@@ -656,7 +855,7 @@ const setupIpcHandlers = () => {
       }
 
       logger.info("Building complete cache (optimized)...");
-      
+
       // Progress callback to send updates to renderer
       const onProgress = (progress) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -665,11 +864,11 @@ const setupIpcHandlers = () => {
       };
 
       const result = await webdavExplorer.buildCompleteCache(onProgress);
-      
+
       if (result.success) {
         logger.info(`Cache built successfully: ${result.stats.totalFolders} folders in ${result.stats.totalTime}s`);
       }
-      
+
       return result;
     } catch (error) {
       logger.error("Failed to build complete cache:", error);
@@ -791,7 +990,7 @@ app.on("before-quit", async (event) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send("webdav:triggerCacheSync");
         // Wait a bit for sync to complete
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
       }
     } catch (error) {
       logger.error("Error during cache sync on shutdown:", error);

@@ -10,14 +10,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   webdavGetFolderStats: (remotePath) => ipcRenderer.invoke("webdav:getFolderStats", remotePath),
   webdavScanFolderRecursive: (remotePath) => ipcRenderer.invoke("webdav:scanFolderRecursive", remotePath),
   webdavGetFileInfo: (remotePath) => ipcRenderer.invoke("webdav:getFileInfo", remotePath),
-  
+
   // WebDAV cache operations
   syncCache: () => ipcRenderer.invoke("webdav:syncCache"),
   buildCompleteCache: () => ipcRenderer.invoke("webdav:buildCompleteCache"),
   onCacheProgress: (callback) => {
     ipcRenderer.on("webdav:cacheProgress", (event, data) => callback(data));
   },
-  
+
   // Legacy WebDAV operations
   testWebdavConnection: () => ipcRenderer.invoke("webdav:testConnection"),
 
@@ -28,9 +28,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Queue operations
   queueAddJob: (filePath, fileInfo) => ipcRenderer.invoke("queue:addJob", filePath, fileInfo),
   queueRemoveJob: (jobId) => ipcRenderer.invoke("queue:removeJob", jobId),
+  queueDeleteJob: (jobId) => ipcRenderer.invoke("queue:deleteJob", jobId),
   queuePauseJob: (jobId) => ipcRenderer.invoke("queue:pauseJob", jobId),
   queueResumeJob: (jobId) => ipcRenderer.invoke("queue:resumeJob", jobId),
   queueRetryJob: (jobId) => ipcRenderer.invoke("queue:retryJob", jobId),
+  queueApproveJob: (jobId) => ipcRenderer.invoke("queue:approveJob", jobId),
+  queueRejectJob: (jobId) => ipcRenderer.invoke("queue:rejectJob", jobId),
   queueGetJobs: () => ipcRenderer.invoke("queue:getJobs"),
   queueGetStats: () => ipcRenderer.invoke("queue:getStats"),
   queueStart: () => ipcRenderer.invoke("queue:start"),
@@ -39,6 +42,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   queueResume: () => ipcRenderer.invoke("queue:resume"),
   queueClear: () => ipcRenderer.invoke("queue:clear"),
   queueGetStatus: () => ipcRenderer.invoke("queue:getStatus"),
+  queueUpdateSettings: (settings) => ipcRenderer.invoke("queue:updateSettings", settings),
 
   // Progress file operations
   progressGetEncodedFiles: () => ipcRenderer.invoke("progress:getEncodedFiles"),
@@ -55,6 +59,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   systemShutdown: () => ipcRenderer.invoke("system:shutdown"),
   playFile: (remotePath) => ipcRenderer.invoke("playFile", remotePath),
   playOriginalFile: (filename) => ipcRenderer.invoke("playOriginalFile", filename),
+  playEncodedFile: (filename) => ipcRenderer.invoke("playEncodedFile", filename),
+
+  // Backup and restore operations
+  restoreFromLocal: (jobId, type) => ipcRenderer.invoke("restore:fromLocal", jobId, type),
+  restoreFromServer: (jobId) => ipcRenderer.invoke("restore:fromServer", jobId),
+  backupCheckExists: (jobId) => ipcRenderer.invoke("backup:checkExists", jobId),
 
   // Event listeners
   onQueueProgress: (callback) => {

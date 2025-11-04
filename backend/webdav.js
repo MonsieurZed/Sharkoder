@@ -21,13 +21,13 @@ class WebDAVManager {
 
       // WebDAV URL for Seedhost: http://ds10256.seedhost.eu:13888
       let webdavUrl = this.config.webdav_url || "http://ds10256.seedhost.eu:13888";
-      
+
       // Validate and fix URL if protocol is missing
       if (!webdavUrl.startsWith("http://") && !webdavUrl.startsWith("https://")) {
         logger.warn(`WebDAV URL missing protocol, adding http:// - ${webdavUrl}`);
         webdavUrl = "http://" + webdavUrl;
       }
-      
+
       const webdavUser = this.config.webdav_user || "sharkdav";
       const webdavPass = this.config.webdav_password || "sharkdav";
 
@@ -400,6 +400,30 @@ class WebDAVManager {
       logger.warn(`Could not delete WebDAV backup file ${backupPath}:`, error.message);
     }
     return false;
+  }
+
+  /**
+   * Rename a file on the server
+   */
+  async renameFile(oldRemotePath, newRemotePath) {
+    await this.ensureConnection();
+
+    const fullOldPath = oldRemotePath.startsWith(this.config.remote_path || "/") ? oldRemotePath : path.posix.join(this.config.remote_path || "/", oldRemotePath);
+    const fullNewPath = newRemotePath.startsWith(this.config.remote_path || "/") ? newRemotePath : path.posix.join(this.config.remote_path || "/", newRemotePath);
+
+    try {
+      const exists = await this.client.exists(fullOldPath);
+      if (exists) {
+        await this.client.moveFile(fullOldPath, fullNewPath);
+        logger.info(`Renamed WebDAV file: ${fullOldPath} -> ${fullNewPath}`);
+        return true;
+      }
+      logger.error(`Source file does not exist: ${fullOldPath}`);
+      return false;
+    } catch (error) {
+      logger.error(`Could not rename WebDAV file ${fullOldPath}:`, error);
+      throw error;
+    }
   }
 
   /**

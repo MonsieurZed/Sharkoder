@@ -340,6 +340,19 @@ class TransferManager {
   }
 
   /**
+   * Rename a file on the server
+   */
+  async renameFile(oldPath, newPath) {
+    if (this.sftpManager.connected) {
+      return await this.sftpManager.renameFile(oldPath, newPath);
+    }
+    if (this.webdavManager.connected) {
+      return await this.webdavManager.renameFile(oldPath, newPath);
+    }
+    throw new Error("No transfer method connected");
+  }
+
+  /**
    * Get connection status
    */
   getStatus() {

@@ -143,11 +143,16 @@ const calculateETA = (progressPercent, elapsedSeconds) => {
     return null;
   }
 
+  // Avoid calculation if progress is too small (< 0.5%) to prevent wildly inaccurate ETAs
+  if (progressPercent < 0.5) {
+    return null;
+  }
+
   const totalEstimatedSeconds = (elapsedSeconds * 100) / progressPercent;
   const remainingSeconds = totalEstimatedSeconds - elapsedSeconds;
 
-  // Return null if ETA is invalid or unreasonably large (> 24 hours)
-  if (!isFinite(remainingSeconds) || remainingSeconds < 0 || remainingSeconds > 86400) {
+  // Return null if ETA is invalid or unreasonably large (> 48 hours)
+  if (!isFinite(remainingSeconds) || remainingSeconds < 0 || remainingSeconds > 172800) {
     return null;
   }
 

@@ -93,6 +93,18 @@ class VideoEncoder extends EventEmitter {
     });
   }
 
+  // Force reload user config (useful after config changes)
+  async reloadConfig() {
+    try {
+      this.userConfig = await fs.readJSON("./sharkoder.config.json");
+      logger.info("User config reloaded");
+      return true;
+    } catch (error) {
+      logger.warn("Failed to reload user config:", error.message);
+      return false;
+    }
+  }
+
   async encodeVideo(inputPath, outputPath, onProgress = null) {
     if (this.isEncoding) {
       throw new Error("Encoder is already running");
@@ -106,15 +118,8 @@ class VideoEncoder extends EventEmitter {
       // Save current encoding file to disk for crash recovery
       await this.saveEncodingState();
 
-      // Load user config from local file if available
-      if (!this.userConfig) {
-        try {
-          this.userConfig = await fs.readJSON("./sharkoder.config.json");
-          logger.info("Loaded user config from local file");
-        } catch (error) {
-          logger.warn("Failed to load user config, using defaults:", error.message);
-        }
-      }
+      // Force reload user config to get latest settings
+      await this.reloadConfig();
 
       // Get encoding settings from user config or fallback to base config
       const ffmpegConfig = this.userConfig?.ffmpeg || {};
@@ -125,8 +130,10 @@ class VideoEncoder extends EventEmitter {
       const audioCodec = ffmpegConfig.audio_codec || "copy";
       const audioBitrate = ffmpegConfig.audio_bitrate || 128;
       const twoPass = ffmpegConfig.two_pass || false;
-      const profile = ffmpegConfig.profile || "main";
+      const profile = ffmpegConfig.profile || this.config.profile || "main10";
       const forceGPU = ffmpegConfig.force_gpu || false;
+
+      logger.info(`[CONFIG] Profile from userConfig: ${ffmpegConfig.profile}, from baseConfig: ${this.config.profile}, final: ${profile}`);
 
       // Test GPU availability if not tested yet
       if (this.gpuAvailable === null) {
@@ -144,7 +151,8 @@ class VideoEncoder extends EventEmitter {
       logger.info(`Audio tracks: ${videoInfo.audio.length} (${videoInfo.audio.map((a) => `${a.language}:${a.codec}`).join(", ")})`);
       logger.info(`Subtitle tracks: ${videoInfo.subtitles.length} (${videoInfo.subtitles.map((s) => `${s.language}:${s.codec}`).join(", ")})`);
       logger.info(`Encoder mode: ${this.gpuAvailable ? "GPU (NVENC)" : "CPU (x265)"}`);
-      logger.info(`Settings - Preset: ${this.gpuAvailable ? encodePreset : cpuPreset}, Quality: ${this.gpuAvailable ? cq : crf}, Audio: ${audioCodec}`);
+      logger.info(`Settings - Preset: ${this.gpuAvailable ? encodePreset : cpuPreset}, Quality: ${this.gpuAvailable ? `CQ ${cq}` : `CRF ${crf}`}, Profile: ${profile}`);
+      logger.info(`Audio - Codec: ${audioCodec}, Bitrate: ${audioCodec === "copy" ? "original" : audioBitrate + "k"}`);
 
       // Ensure output directory exists
       await fs.ensureDir(path.dirname(outputPath));
@@ -154,17 +162,17 @@ class VideoEncoder extends EventEmitter {
 
         // Configure encoding based on GPU availability
         if (this.gpuAvailable) {
-          // Load advanced NVENC settings from config
-          const rcMode = this.config.ffmpeg?.rc_mode || "vbr_hq";
-          const bitrate = this.config.ffmpeg?.bitrate || "3M";
-          const maxrate = this.config.ffmpeg?.maxrate || "6M";
-          const lookahead = this.config.ffmpeg?.lookahead || 32;
-          const bframes = this.config.ffmpeg?.bframes || 3;
-          const bRefMode = this.config.ffmpeg?.b_ref_mode || "middle";
-          const spatialAQ = this.config.ffmpeg?.spatial_aq !== false;
-          const temporalAQ = this.config.ffmpeg?.temporal_aq !== false;
-          const aqStrength = this.config.ffmpeg?.aq_strength || 8;
-          const multipass = this.config.ffmpeg?.multipass || "fullres";
+          // Load advanced NVENC settings from config (use userConfig first, then fallback to base config)
+          const rcMode = ffmpegConfig.rc_mode || this.config.ffmpeg?.rc_mode || "vbr_hq";
+          const bitrate = ffmpegConfig.bitrate || this.config.ffmpeg?.bitrate || "3M";
+          const maxrate = ffmpegConfig.maxrate || this.config.ffmpeg?.maxrate || "6M";
+          const lookahead = ffmpegConfig.lookahead !== undefined ? ffmpegConfig.lookahead : this.config.ffmpeg?.lookahead || 32;
+          const bframes = ffmpegConfig.bframes !== undefined ? ffmpegConfig.bframes : this.config.ffmpeg?.bframes || 3;
+          const bRefMode = ffmpegConfig.b_ref_mode || this.config.ffmpeg?.b_ref_mode || "middle";
+          const spatialAQ = ffmpegConfig.spatial_aq !== false && this.config.ffmpeg?.spatial_aq !== false;
+          const temporalAQ = ffmpegConfig.temporal_aq !== false && this.config.ffmpeg?.temporal_aq !== false;
+          const aqStrength = ffmpegConfig.aq_strength || this.config.ffmpeg?.aq_strength || 8;
+          const multipass = ffmpegConfig.multipass || this.config.ffmpeg?.multipass || "fullres";
 
           logger.info(
             `NVENC Advanced: rc=${rcMode}, bitrate=${bitrate}, maxrate=${maxrate}, lookahead=${lookahead}, bf=${bframes}, aq=${spatialAQ ? 1 : 0}/${temporalAQ ? 1 : 0}, multipass=${multipass}`
@@ -187,7 +195,7 @@ class VideoEncoder extends EventEmitter {
             .addOption("-b_ref_mode", bRefMode) // B-frame reference mode: disabled, each, middle
             .addOption("-rc-lookahead", lookahead) // Lookahead frames (0-32)
             .addOption("-multipass", multipass) // Multipass: disabled, qres, fullres
-            .addOption("-2pass", "0"); // Single pass (2pass not well supported on NVENC)
+            .addOption("-2pass", twoPass ? "1" : "0"); // Two-pass encoding
         } else {
           // CPU encoding fallback
           command.videoCodec("libx265").addOption("-preset", cpuPreset).addOption("-crf", crf).addOption("-profile:v", profile).addOption("-x265-params", "log-level=error");
@@ -200,9 +208,10 @@ class VideoEncoder extends EventEmitter {
 
         // Audio configuration
         if (audioCodec === "copy") {
-          command.audioCodec("copy"); // Copy all audio streams
+          command.addOption("-c:a", "copy"); // Copy all audio streams
         } else {
-          command.audioCodec(audioCodec).audioBitrate(audioBitrate);
+          // Re-encode audio with specified codec and bitrate
+          command.addOption("-c:a", audioCodec).addOption("-b:a", `${audioBitrate}k`);
         }
 
         command
@@ -223,6 +232,12 @@ class VideoEncoder extends EventEmitter {
 
               const elapsedSeconds = (Date.now() - this.startTime) / 1000;
               const eta = calculateETA(percent, elapsedSeconds);
+
+              // Log ETA calculation occasionally for debugging
+              if (Math.random() < 0.05) {
+                // 5% of the time
+                logger.debug(`ETA calculation: ${percent.toFixed(2)}% complete, ${elapsedSeconds.toFixed(0)}s elapsed, ETA: ${eta ? eta + "s" : "null"}`);
+              }
 
               const progressData = {
                 type: "encoding",

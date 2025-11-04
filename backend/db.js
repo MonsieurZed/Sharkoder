@@ -19,7 +19,7 @@ const saveDatabase = () => {
 const initDatabase = async () => {
   try {
     SQL = await initSQL();
-    
+
     // Load existing database or create new one
     if (fs.existsSync(DB_PATH)) {
       const filebuffer = fs.readFileSync(DB_PATH);
@@ -58,33 +58,82 @@ const initDatabase = async () => {
     `;
 
     db.run(createJobsTable);
-    
+
     // Migration: Ajouter les nouvelles colonnes si elles n'existent pas
     try {
       db.run("ALTER TABLE jobs ADD COLUMN container TEXT");
-    } catch (e) { /* Column already exists */ }
+    } catch (e) {
+      /* Column already exists */
+    }
     try {
       db.run("ALTER TABLE jobs ADD COLUMN resolution TEXT");
-    } catch (e) { /* Column already exists */ }
+    } catch (e) {
+      /* Column already exists */
+    }
     try {
       db.run("ALTER TABLE jobs ADD COLUMN duration REAL");
-    } catch (e) { /* Column already exists */ }
+    } catch (e) {
+      /* Column already exists */
+    }
     try {
       db.run("ALTER TABLE jobs ADD COLUMN bitrate INTEGER");
-    } catch (e) { /* Column already exists */ }
+    } catch (e) {
+      /* Column already exists */
+    }
     try {
       db.run("ALTER TABLE jobs ADD COLUMN audio INTEGER DEFAULT 0");
-    } catch (e) { /* Column already exists */ }
+    } catch (e) {
+      /* Column already exists */
+    }
     try {
       db.run("ALTER TABLE jobs ADD COLUMN audioCodec TEXT");
-    } catch (e) { /* Column already exists */ }
+    } catch (e) {
+      /* Column already exists */
+    }
     try {
       db.run("ALTER TABLE jobs ADD COLUMN subtitles INTEGER DEFAULT 0");
-    } catch (e) { /* Column already exists */ }
-    
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN pause_before_upload INTEGER DEFAULT 0");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN size_after INTEGER");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN bitrate_after INTEGER");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN duration_after REAL");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN local_original_path TEXT");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN local_encoded_path TEXT");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN server_backup_path TEXT");
+    } catch (e) {
+      /* Column already exists */
+    }
+
     saveDatabase();
     logger.info("Jobs table ready");
-    
+
     return Promise.resolve();
   } catch (error) {
     logger.error("Failed to initialize database:", error);
@@ -109,11 +158,11 @@ const closeDatabase = async () => {
 // Job operations
 const createJob = async (jobData) => {
   try {
-    const { 
-      filepath, 
-      size, 
-      codec_before = null, 
-      codec_after = null, 
+    const {
+      filepath,
+      size,
+      codec_before = null,
+      codec_after = null,
       status = "waiting",
       container = null,
       resolution = null,
@@ -121,21 +170,22 @@ const createJob = async (jobData) => {
       bitrate = null,
       audio = 0,
       audioCodec = null,
-      subtitles = 0
+      subtitles = 0,
+      pause_before_upload = 0,
     } = jobData;
 
     const query = `
-      INSERT INTO jobs (filepath, size, codec_before, codec_after, status, container, resolution, duration, bitrate, audio, audioCodec, subtitles)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO jobs (filepath, size, codec_before, codec_after, status, container, resolution, duration, bitrate, audio, audioCodec, subtitles, pause_before_upload)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    db.run(query, [filepath, size, codec_before, codec_after, status, container, resolution, duration, bitrate, audio, audioCodec, subtitles]);
-    
+    db.run(query, [filepath, size, codec_before, codec_after, status, container, resolution, duration, bitrate, audio, audioCodec, subtitles, pause_before_upload]);
+
     const result = db.exec("SELECT last_insert_rowid() as id");
     const lastId = result[0].values[0][0];
-    
+
     saveDatabase();
-    logger.info(`Created job with ID: ${lastId}`);
+    logger.info(`Created job with ID: ${lastId} (pause_before_upload: ${pause_before_upload})`);
     return lastId;
   } catch (error) {
     logger.error("Failed to create job:", error);
@@ -147,18 +197,18 @@ const getJob = async (jobId) => {
   try {
     const query = "SELECT * FROM jobs WHERE id = ?";
     const result = db.exec(query, [jobId]);
-    
+
     if (result.length === 0 || result[0].values.length === 0) {
       return undefined;
     }
-    
+
     const columns = result[0].columns;
     const values = result[0].values[0];
     const row = {};
     columns.forEach((col, i) => {
       row[col] = values[i];
     });
-    
+
     return row;
   } catch (error) {
     logger.error("Failed to get job:", error);
@@ -170,20 +220,20 @@ const getAllJobs = async () => {
   try {
     const query = "SELECT * FROM jobs ORDER BY created_at DESC";
     const result = db.exec(query);
-    
+
     if (result.length === 0) {
       return [];
     }
-    
+
     const columns = result[0].columns;
-    const rows = result[0].values.map(values => {
+    const rows = result[0].values.map((values) => {
       const row = {};
       columns.forEach((col, i) => {
         row[col] = values[i];
       });
       return row;
     });
-    
+
     return rows;
   } catch (error) {
     logger.error("Failed to get all jobs:", error);
@@ -195,20 +245,20 @@ const getJobsByStatus = async (status) => {
   try {
     const query = "SELECT * FROM jobs WHERE status = ? ORDER BY created_at ASC";
     const result = db.exec(query, [status]);
-    
+
     if (result.length === 0) {
       return [];
     }
-    
+
     const columns = result[0].columns;
-    const rows = result[0].values.map(values => {
+    const rows = result[0].values.map((values) => {
       const row = {};
       columns.forEach((col, i) => {
         row[col] = values[i];
       });
       return row;
     });
-    
+
     return rows;
   } catch (error) {
     logger.error("Failed to get jobs by status:", error);
@@ -236,7 +286,7 @@ const updateJob = async (jobId, updates) => {
 
     db.run(query, values);
     saveDatabase();
-    
+
     return 1; // Return number of changes
   } catch (error) {
     logger.error("Failed to update job:", error);
@@ -249,11 +299,40 @@ const deleteJob = async (jobId) => {
     const query = "DELETE FROM jobs WHERE id = ?";
     db.run(query, [jobId]);
     saveDatabase();
-    
+
     logger.info(`Deleted job with ID: ${jobId}`);
     return 1;
   } catch (error) {
     logger.error("Failed to delete job:", error);
+    throw error;
+  }
+};
+
+const removeFromQueue = async (jobId) => {
+  try {
+    // Get the job first to check its status
+    const job = await getJob(jobId);
+
+    if (!job) {
+      logger.warn(`Job ${jobId} not found`);
+      return 0;
+    }
+
+    // If job is completed, don't delete it - just mark as archived
+    if (job.status === "completed") {
+      logger.info(`Job ${jobId} is completed, keeping in database`);
+      return 0;
+    }
+
+    // If job is not completed, delete it
+    const query = "DELETE FROM jobs WHERE id = ?";
+    db.run(query, [jobId]);
+    saveDatabase();
+
+    logger.info(`Removed job ${jobId} from queue`);
+    return 1;
+  } catch (error) {
+    logger.error("Failed to remove job from queue:", error);
     throw error;
   }
 };
@@ -269,7 +348,7 @@ const getJobStats = async () => {
     `;
 
     const result = db.exec(query);
-    
+
     const stats = {
       waiting: 0,
       downloading: 0,
@@ -306,7 +385,7 @@ const cleanupOldJobs = async (daysOld = 30) => {
 
     db.run(query, [cutoffDate.toISOString()]);
     saveDatabase();
-    
+
     logger.info(`Cleaned up old jobs`);
     return 1;
   } catch (error) {
@@ -340,7 +419,7 @@ const markJobStarted = async (jobId) => {
   return updateJob(jobId, updates);
 };
 
-const markJobCompleted = async (jobId, codecAfter = null) => {
+const markJobCompleted = async (jobId, codecAfter = null, backupPaths = {}) => {
   const updates = {
     status: "completed",
     finished_at: new Date().toISOString(),
@@ -353,6 +432,17 @@ const markJobCompleted = async (jobId, codecAfter = null) => {
     updates.codec_after = codecAfter;
   }
 
+  // Add backup paths if provided
+  if (backupPaths.localOriginal) {
+    updates.local_original_path = backupPaths.localOriginal;
+  }
+  if (backupPaths.localEncoded) {
+    updates.local_encoded_path = backupPaths.localEncoded;
+  }
+  if (backupPaths.serverBackup) {
+    updates.server_backup_path = backupPaths.serverBackup;
+  }
+
   return updateJob(jobId, updates);
 };
 
@@ -361,7 +451,7 @@ const markJobFailed = async (jobId, error) => {
     // Get current retry count
     const job = await getJob(jobId);
     const retryCount = (job?.retry_count || 0) + 1;
-    
+
     const updates = {
       status: "failed",
       finished_at: new Date().toISOString(),
@@ -385,6 +475,7 @@ module.exports = {
   getJobsByStatus,
   updateJob,
   deleteJob,
+  removeFromQueue,
   getJobStats,
   cleanupOldJobs,
   resetJobStatus,

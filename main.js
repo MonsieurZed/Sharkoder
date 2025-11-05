@@ -699,7 +699,7 @@ const setupIpcHandlers = () => {
         return { success: false, error: "Server backup not found" };
       }
 
-      // Restore: rename .original.bak back to original filename
+      // Restore: rename .bak.<ext> back to original filename
       await transferManager.renameFile(serverBackupPath, job.filepath);
 
       logger.info(`Restored original file from server backup: ${job.filepath}`);

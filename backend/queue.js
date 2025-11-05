@@ -526,8 +526,65 @@ class QueueManager extends EventEmitter {
         // Get video info
         const videoInfo = await this.encoder.getVideoInfo(localPath);
         const codecBefore = videoInfo.video.codec;
-        logger.info(`[ENCODE] Detected codec: ${codecBefore}`);
+        logger.info(`[ENCODE] Detected codec: ${codecBefore}, resolution: ${videoInfo.video.width}x${videoInfo.video.height}`);
         await updateJob(job.id, { codec_before: codecBefore });
+
+        // Check if simulation mode is enabled
+        const simulationMode = this.config.advanced?.simulation_mode || false;
+
+        if (simulationMode) {
+          logger.info(`[ENCODE] 🧪 SIMULATION MODE - Job ${job.id} will skip encoding and just copy the file`);
+
+          // Copy file instead of encoding
+          const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+          await fs.ensureDir(path.dirname(encodedPath));
+          logger.info(`[ENCODE] 🧪 SIMULATION: Copying file: ${localPath} -> ${encodedPath}`);
+          await fs.copy(localPath, encodedPath);
+
+          logger.info(`[ENCODE] 🧪 SIMULATION: File copied, updating job status`);
+
+          await this.updateProgressFile(job, {
+            originalSize: videoInfo.size,
+            encodedSize: videoInfo.size,
+            codecBefore: codecBefore,
+            codecAfter: `${codecBefore} (simulation)`,
+            duration: videoInfo.duration,
+            encodingTime: 0,
+            skipped: true,
+            reason: "Simulation Mode - No encoding",
+          });
+
+          // Check if we should pause before upload for manual review (even in simulation)
+          if (job.pause_before_upload) {
+            logger.info(`[ENCODE] 🧪 SIMULATION: Job ${job.id} requires manual review before upload`);
+
+            await updateJob(job.id, {
+              status: "awaiting_approval",
+              codec_after: `${codecBefore} (simulation)`,
+              size_after: videoInfo.size,
+              bitrate_after: videoInfo.bitrate,
+              duration_after: videoInfo.duration,
+            });
+
+            this.encodingJob = null;
+            this.emit("jobUpdate", { id: job.id, status: "awaiting_approval" });
+            logger.info(`[ENCODE] 🧪 SIMULATION: Job ${job.id} paused for manual approval`);
+          } else {
+            // Update to ready for upload
+            await updateJob(job.id, {
+              status: "ready_upload",
+              codec_after: `${codecBefore} (simulation)`,
+              size_after: videoInfo.size,
+              bitrate_after: videoInfo.bitrate,
+              duration_after: videoInfo.duration,
+            });
+
+            logger.info(`[ENCODE] 🧪 SIMULATION: Job ${job.id} completed (no encoding)`);
+            this.encodingJob = null;
+            this.emit("jobUpdate", { id: job.id, status: "ready_upload" });
+          }
+          return;
+        }
 
         // Check if already encoded in HEVC/H.265 and if we should skip re-encoding
         const skipHevcReencode = this.config.advanced?.skip_hevc_reencode || false;
@@ -725,14 +782,16 @@ class QueueManager extends EventEmitter {
           logger.info(`[UPLOAD] Completed job ${job.id}`);
           this.uploadingJobs.delete(job.id);
 
-          // Keep the backup file (.original.bak) on server - do NOT delete it
-          logger.info(`[UPLOAD] Original file backed up as: ${job.filepath}.original.bak`);
+          // Keep the backup file (.bak.<ext>) on server - do NOT delete it
+          const parsedPath = path.parse(job.filepath);
+          const backupFilename = `${parsedPath.name}.bak${parsedPath.ext}`;
+          const serverBackupPath = path.posix.join(parsedPath.dir, backupFilename);
+          logger.info(`[UPLOAD] Original file backed up as: ${serverBackupPath}`);
 
           // Calculate local backup paths
           const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
           const localOriginalPath = path.join(this.config.local_backup, "originals", normalizedPath);
           const localEncodedPath = path.join(this.config.local_backup, "encoded", normalizedPath);
-          const serverBackupPath = `${job.filepath}.original.bak`;
 
           // Mark job as completed with actual codec used and backup paths
           const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
@@ -749,7 +808,7 @@ class QueueManager extends EventEmitter {
           logger.error(`[UPLOAD] Failed job ${job.id}:`, error);
           this.uploadingJobs.delete(job.id);
 
-          // Restore the backup file (.original.bak) on failure
+          // Restore the backup file (.bak.<ext>) on failure
           try {
             const restored = await this.transferManager.restoreBackupFile(job.filepath);
             if (restored) {

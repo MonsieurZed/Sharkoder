@@ -155,12 +155,18 @@ class WebDAVExplorer {
           // Get resolution
           let resolution = null;
           if (videoStream?.height) {
+            // logger.info(`[VIDEO INFO] Resolution detection: width=${videoStream.width}, height=${videoStream.height}, codec=${videoStream.codec_name}`);
+            
             if (videoStream.height >= 2160) resolution = "4K";
             else if (videoStream.height >= 1440) resolution = "1440p";
             else if (videoStream.height >= 1080) resolution = "1080p";
             else if (videoStream.height >= 720) resolution = "720p";
             else if (videoStream.height >= 480) resolution = "480p";
             else resolution = `${videoStream.height}p`;
+            
+            // logger.info(`[VIDEO INFO] Detected resolution: ${resolution} (${videoStream.width}x${videoStream.height})`);
+          } else {
+            logger.warn(`[VIDEO INFO] No video stream height found in metadata`);
           }
 
           // Get audio codec from first audio stream
@@ -611,7 +617,10 @@ class WebDAVExplorer {
     const fs = require("fs-extra");
     const basePath = this.config.webdav_path || this.config.remote_path || "/";
     const fullRemotePath = path.posix.join(basePath, remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    
+    // Generate backup path: <filename>.bak.<ext>
+    const parsedPath = path.parse(fullRemotePath);
+    const backupPath = path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
 
     try {
       // Get file size
@@ -712,7 +721,10 @@ class WebDAVExplorer {
 
     const basePath = this.config.webdav_path || this.config.remote_path || "/";
     const fullRemotePath = path.posix.join(basePath, remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    
+    // Generate backup path: <filename>.bak.<ext>
+    const parsedPath = path.parse(fullRemotePath);
+    const backupPath = path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
 
     try {
       const exists = await this.client.exists(backupPath);

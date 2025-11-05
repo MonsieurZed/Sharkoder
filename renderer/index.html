@@ -1957,7 +1957,7 @@
                                   onClick={() => handleRestore(job.id, "server")}
                                   disabled={loading}
                                   className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50"
-                                  title="Restore from server backup (.original.bak)"
+                                  title="Restore from server backup (.bak.<ext>)"
                                 >
                                   ↩️ Restore Server Backup
                                 </button>
@@ -2564,13 +2564,30 @@
               <div className="h-[650px] overflow-y-auto p-6 space-y-6">
                 {activeTab === "ffmpeg" && (
                   <>
+                    {/* Info Banner */}
+                    <div className="bg-blue-900/30 border border-blue-500/50 rounded-lg p-4 mb-4">
+                      <h3 className="text-md font-semibold text-blue-300 mb-2">📖 Guide des Paramètres FFmpeg</h3>
+                      <div className="text-xs text-gray-300 space-y-1">
+                        <p>• <strong>CQ/CRF plus bas</strong> = meilleure qualité, fichiers plus gros (18-20 = haute qualité, 24-26 = équilibré)</p>
+                        <p>• <strong>Preset plus lent</strong> = meilleure compression (p7/slow recommandé pour qualité optimale)</p>
+                        <p>• <strong>Bitrate</strong>: 1080p ≈ 4-6M, 4K ≈ 15-25M (dépend du contenu)</p>
+                        <p>• <strong>Main10 (10-bit)</strong> recommandé pour meilleure gradation des couleurs</p>
+                        <p>• <strong>Spatial/Temporal AQ</strong> activés = meilleure allocation du bitrate selon complexité image</p>
+                      </div>
+                    </div>
+
                     {/* GPU Settings */}
+                    {/* ===== GPU SETTINGS ===== */}
                     <div className="space-y-4">
-                      <h3 className="text-lg font-semibold text-white">GPU Settings (NVENC)</h3>
+                      <h3 className="text-lg font-semibold text-white">🎮 GPU Settings (NVENC)</h3>
+                      <p className="text-sm text-gray-400">Paramètres pour l'encodage GPU avec NVIDIA NVENC (hevc_nvenc)</p>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">GPU Encode Preset</label>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            GPU Encode Preset
+                            <span className="ml-2 text-xs text-blue-400">(p1-p7)</span>
+                          </label>
                           <select
                             value={config.ffmpeg?.encode_preset || config.encode_preset || "p7"}
                             onChange={(e) => {
@@ -2579,19 +2596,28 @@
                             }}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           >
-                            <option value="p1">P1 (Fastest)</option>
-                            <option value="p2">P2</option>
-                            <option value="p3">P3</option>
-                            <option value="p4">P4</option>
-                            <option value="p5">P5</option>
-                            <option value="p6">P6</option>
-                            <option value="p7">P7 (Best Quality)</option>
+                            <option value="p1">P1 - Fastest (⚡ Très rapide)</option>
+                            <option value="p2">P2 - Faster</option>
+                            <option value="p3">P3 - Fast</option>
+                            <option value="p4">P4 - Medium</option>
+                            <option value="p5">P5 - Slow</option>
+                            <option value="p6">P6 - Slower</option>
+                            <option value="p7">P7 - Slowest (Meilleure qualité)</option>
                           </select>
-                          <p className="text-xs text-gray-400 mt-1">P7 = très lent, meilleure compression</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <strong>Min:</strong> p1 (rapide, qualité moyenne) | <strong>Max:</strong> p7 (lent, meilleure qualité)
+                            <br />
+                            <strong>Recommandé:</strong> p7 pour qualité optimale, p4-p5 pour rapidité
+                            <br />
+                            <em>Contrôle la vitesse d'encodage vs qualité - plus lent = meilleure compression</em>
+                          </p>
                         </div>
 
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">CQ (Constant Quality)</label>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            CQ - Constant Quality
+                            <span className="ml-2 text-xs text-blue-400">(0-51)</span>
+                          </label>
                           <input
                             type="number"
                             min="0"
@@ -2603,167 +2629,242 @@
                             }}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
-                          <p className="text-xs text-gray-400 mt-1">18-22 = haute qualité, 24-28 = moyenne, 30+ = compressé</p>
-                        </div>
-                      </div>
-
-                      {/* Advanced NVENC Settings */}
-                      <div className="pt-4 border-t border-gray-700">
-                        <h4 className="text-md font-semibold text-white mb-3">⚙️ Paramètres Avancés NVENC</h4>
-
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">Mode de Contrôle RC</label>
-                            <select
-                              value={config.ffmpeg?.rc_mode || "vbr_hq"}
-                              onChange={(e) => updateConfigNested("ffmpeg", "rc_mode", e.target.value)}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                            >
-                              <option value="constqp">CQP (Constant QP)</option>
-                              <option value="vbr">VBR (Variable Bitrate)</option>
-                              <option value="vbr_hq">VBR HQ (Recommandé)</option>
-                              <option value="cbr">CBR (Constant Bitrate)</option>
-                            </select>
-                            <p className="text-xs text-gray-400 mt-1">VBR HQ = meilleur compromis qualité/taille</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">Bitrate Moyen</label>
-                            <input
-                              type="text"
-                              value={config.ffmpeg?.bitrate || "5M"}
-                              onChange={(e) => updateConfigNested("ffmpeg", "bitrate", e.target.value)}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                              placeholder="5M"
-                            />
-                            <p className="text-xs text-gray-400 mt-1">Ex: 3M, 5M, 10M (Mb/s)</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">Maxrate (Pic autorisé)</label>
-                            <input
-                              type="text"
-                              value={config.ffmpeg?.maxrate || "10M"}
-                              onChange={(e) => updateConfigNested("ffmpeg", "maxrate", e.target.value)}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                              placeholder="10M"
-                            />
-                            <p className="text-xs text-gray-400 mt-1">Débit maximum autorisé</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">Lookahead Frames</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max="32"
-                              value={config.ffmpeg?.lookahead || 32}
-                              onChange={(e) => updateConfigNested("ffmpeg", "lookahead", parseInt(e.target.value))}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                            />
-                            <p className="text-xs text-gray-400 mt-1">0-32, analyse frames à l'avance (32 recommandé)</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">B-Frames</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max="4"
-                              value={config.ffmpeg?.bframes || 3}
-                              onChange={(e) => updateConfigNested("ffmpeg", "bframes", parseInt(e.target.value))}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                            />
-                            <p className="text-xs text-gray-400 mt-1">0-4, augmente compression (3 recommandé)</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">AQ Strength</label>
-                            <input
-                              type="number"
-                              min="1"
-                              max="15"
-                              value={config.ffmpeg?.aq_strength || 8}
-                              onChange={(e) => updateConfigNested("ffmpeg", "aq_strength", parseInt(e.target.value))}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                            />
-                            <p className="text-xs text-gray-400 mt-1">1-15, force de quantification adaptative (8 recommandé)</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">B-Frame Ref Mode</label>
-                            <select
-                              value={config.ffmpeg?.b_ref_mode || "middle"}
-                              onChange={(e) => updateConfigNested("ffmpeg", "b_ref_mode", e.target.value)}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                            >
-                              <option value="disabled">Disabled</option>
-                              <option value="each">Each (référence tous)</option>
-                              <option value="middle">Middle (référence milieu) - Recommandé</option>
-                            </select>
-                            <p className="text-xs text-gray-400 mt-1">Comment B-frames sont référencés</p>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm text-gray-300 mb-2">Multipass Mode</label>
-                            <select
-                              value={config.ffmpeg?.multipass || "fullres"}
-                              onChange={(e) => updateConfigNested("ffmpeg", "multipass", e.target.value)}
-                              className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                            >
-                              <option value="disabled">Disabled</option>
-                              <option value="qres">Quarter Resolution (plus rapide)</option>
-                              <option value="fullres">Full Resolution (meilleure qualité) - Recommandé</option>
-                            </select>
-                            <p className="text-xs text-gray-400 mt-1">Mode multi-passes pour meilleure qualité</p>
-                          </div>
-
-                          <div>
-                            <label className="flex items-center space-x-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={config.ffmpeg?.temporal_aq !== false}
-                                onChange={(e) => updateConfigNested("ffmpeg", "temporal_aq", e.target.checked)}
-                                className="form-checkbox h-5 w-5 text-blue-600"
-                              />
-                              <span className="text-sm text-gray-300">Temporal AQ</span>
-                            </label>
-                            <p className="text-xs text-gray-400 mt-1">Adapte débit selon complexité temporelle</p>
-                          </div>
-                          <div>
-                            <label className="flex items-center space-x-2 cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={config.ffmpeg?.spatial_aq !== false}
-                                onChange={(e) => updateConfigNested("ffmpeg", "spatial_aq", e.target.checked)}
-                                className="form-checkbox h-5 w-5 text-blue-600"
-                              />
-                              <span className="text-sm text-gray-300">Spatial AQ (Adaptive Quantization)</span>
-                            </label>
-                            <p className="text-xs text-gray-400 mt-1">Adapte débit selon complexité spatiale</p>
-                          </div>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <strong>Min:</strong> 0 (lossless, énorme) | <strong>Max:</strong> 51 (qualité minimale)
+                            <br />
+                            <strong>Recommandé:</strong> 18-20 (haute qualité), 22-24 (équilibré), 26-28 (économie)
+                            <br />
+                            <em>Facteur de qualité constant - plus bas = meilleure qualité mais fichiers plus gros</em>
+                          </p>
                         </div>
 
-                        {/* Command Preview */}
-                        <div className="mt-4 p-3 bg-gray-800 rounded border border-gray-600">
-                          <div className="text-xs text-gray-400 mb-1">Commande FFmpeg (aperçu):</div>
-                          <div className="text-xs text-green-400 font-mono break-all">
-                            ffmpeg -i input.mkv -c:v hevc_nvenc -preset {config.encode_preset || "p7"} -rc {config.ffmpeg?.rc_mode || "vbr_hq"} -cq {config.cq || 24} -b:v{" "}
-                            {config.ffmpeg?.bitrate || "3M"} -maxrate {config.ffmpeg?.maxrate || "6M"} -profile:v main10 -pix_fmt p010le -spatial-aq {config.ffmpeg?.spatial_aq !== false ? "1" : "0"}{" "}
-                            -temporal-aq {config.ffmpeg?.temporal_aq !== false ? "1" : "0"} -aq-strength {config.ffmpeg?.aq_strength || 8} -bf {config.ffmpeg?.bframes || 3} -b_ref_mode{" "}
-                            {config.ffmpeg?.b_ref_mode || "middle"} -rc-lookahead {config.ffmpeg?.lookahead || 32} -multipass {config.ffmpeg?.multipass || "fullres"} -c:a copy output.mkv
-                          </div>
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Mode de Contrôle RC (Rate Control)
+                            <span className="ml-2 text-xs text-blue-400">(CQP/VBR/CBR)</span>
+                          </label>
+                          <select
+                            value={config.ffmpeg?.rc_mode || "vbr_hq"}
+                            onChange={(e) => updateConfigNested("ffmpeg", "rc_mode", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          >
+                            <option value="constqp">CQP - Constant QP (qualité fixe)</option>
+                            <option value="vbr">VBR - Variable Bitrate</option>
+                            <option value="vbr_hq">VBR HQ - Variable Bitrate High Quality (Recommandé)</option>
+                            <option value="cbr">CBR - Constant Bitrate (streaming)</option>
+                          </select>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <strong>Recommandé:</strong> vbr_hq (meilleur compromis qualité/taille)
+                            <br />
+                            CQP = qualité constante, VBR = bitrate variable, CBR = streaming
+                            <br />
+                            <em>Méthode de contrôle du débit - VBR HQ adapte le bitrate selon la complexité</em>
+                          </p>
                         </div>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Bitrate Moyen
+                            <span className="ml-2 text-xs text-blue-400">(ex: 3M, 5M, 10M)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={config.ffmpeg?.bitrate || "5M"}
+                            onChange={(e) => updateConfigNested("ffmpeg", "bitrate", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="5M"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            <strong>720p:</strong> 2-3M | <strong>1080p:</strong> 4-6M | <strong>4K:</strong> 15-25M
+                            <br />
+                            <strong>Recommandé 1080p:</strong> 5M (équilibre qualité/taille)
+                            <br />
+                            <em>Débit binaire cible en Mégabits par seconde (M = millions de bits/s)</em>
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Maxrate - Débit Maximum
+                            <span className="ml-2 text-xs text-blue-400">(pics autorisés)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={config.ffmpeg?.maxrate || "10M"}
+                            onChange={(e) => updateConfigNested("ffmpeg", "maxrate", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                            placeholder="10M"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            <strong>Recommandé:</strong> 1.5-2x le bitrate moyen
+                            <br />
+                            Évite les pics de bitrate trop élevés (scènes complexes)
+                            <br />
+                            <em>Limite le débit maximum autorisé pour éviter les sautes de qualité</em>
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Lookahead Frames
+                            <span className="ml-2 text-xs text-blue-400">(0-32)</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="32"
+                            value={config.ffmpeg?.lookahead || 32}
+                            onChange={(e) => updateConfigNested("ffmpeg", "lookahead", parseInt(e.target.value))}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Nombre de frames analysées à l'avance pour optimiser l'allocation du bitrate</em>
+                            <br />
+                            <strong>Min:</strong> 0 (désactivé) | <strong>Max:</strong> 32 frames
+                            <br />
+                            <strong>Recommandé:</strong> 32 (meilleure allocation du bitrate)
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            B-Frames (Bidirectional)
+                            <span className="ml-2 text-xs text-blue-400">(0-4)</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="0"
+                            max="4"
+                            value={config.ffmpeg?.bframes || 3}
+                            onChange={(e) => updateConfigNested("ffmpeg", "bframes", parseInt(e.target.value))}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Frames bidirectionnelles pour meilleure compression (référencent passé et futur)</em>
+                            <br />
+                            <strong>Min:</strong> 0 (aucune) | <strong>Max:</strong> 4 (NVENC limité)
+                            <br />
+                            <strong>Recommandé:</strong> 3 (bon compromis compression/compatibilité)
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            B-Frame Reference Mode
+                            <span className="ml-2 text-xs text-blue-400">(disabled/each/middle)</span>
+                          </label>
+                          <select
+                            value={config.ffmpeg?.b_ref_mode || "middle"}
+                            onChange={(e) => updateConfigNested("ffmpeg", "b_ref_mode", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          >
+                            <option value="disabled">Disabled (aucune référence)</option>
+                            <option value="each">Each (référence chaque B-frame)</option>
+                            <option value="middle">Middle (référence frame centrale - Recommandé)</option>
+                          </select>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Définit comment les B-frames se référencent entre elles pour la compression</em>
+                            <br />
+                            <strong>Recommandé:</strong> middle (meilleur compromis qualité/performance)
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            AQ Strength - Force Quantification Adaptive
+                            <span className="ml-2 text-xs text-blue-400">(1-15)</span>
+                          </label>
+                          <input
+                            type="number"
+                            min="1"
+                            max="15"
+                            value={config.ffmpeg?.aq_strength || 8}
+                            onChange={(e) => updateConfigNested("ffmpeg", "aq_strength", parseInt(e.target.value))}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          />
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Intensité de la quantification adaptative pour préserver les détails</em>
+                            <br />
+                            <strong>Min:</strong> 1 (faible) | <strong>Max:</strong> 15 (très fort)
+                            <br />
+                            <strong>Recommandé:</strong> 8 (équilibre détails/uniformité)
+                          </p>
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Multipass Mode
+                            <span className="ml-2 text-xs text-blue-400">(disabled/qres/fullres)</span>
+                          </label>
+                          <select
+                            value={config.ffmpeg?.multipass || "fullres"}
+                            onChange={(e) => updateConfigNested("ffmpeg", "multipass", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          >
+                            <option value="disabled">Disabled (désactivé)</option>
+                            <option value="qres">Quarter Res (1/4 résolution, plus rapide)</option>
+                            <option value="fullres">Full Res (pleine résolution - Recommandé)</option>
+                          </select>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Analyse en multi-passes pour optimiser l'allocation du bitrate</em>
+                            <br />
+                            <strong>Recommandé:</strong> fullres (meilleure qualité, légèrement plus lent)
+                          </p>
+                        </div>
+                        <div>
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={config.ffmpeg?.temporal_aq !== false}
+                              onChange={(e) => updateConfigNested("ffmpeg", "temporal_aq", e.target.checked)}
+                              className="form-checkbox h-5 w-5 text-blue-600"
+                            />
+                            <span className="text-sm text-gray-300">
+                              Temporal AQ (Quantification Temporelle)
+                              <span className="ml-2 text-xs text-blue-400">(true/false)</span>
+                            </span>
+                          </label>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Adapte le bitrate selon la complexité temporelle (mouvement entre frames)</em>
+                            <br />
+                            <strong>Recommandé:</strong> Activé (améliore les scènes avec mouvement)
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={config.ffmpeg?.spatial_aq !== false}
+                              onChange={(e) => updateConfigNested("ffmpeg", "spatial_aq", e.target.checked)}
+                              className="form-checkbox h-5 w-5 text-blue-600"
+                            />
+                            <span className="text-sm text-gray-300">
+                              Spatial AQ (Quantification Spatiale)
+                              <span className="ml-2 text-xs text-blue-400">(true/false)</span>
+                            </span>
+                          </label>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Adapte le bitrate selon la complexité spatiale (détails dans l'image)</em>
+                            <br />
+                            <strong>Recommandé:</strong> Activé (améliore les zones détaillées)
+                          </p>
+                        </div>
+
+
                       </div>
                     </div>
 
-                    {/* CPU Settings */}
+                    {/* ===== CPU SETTINGS ===== */}
                     <div className="space-y-4 pt-4 border-t border-gray-700">
-                      <h3 className="text-lg font-semibold text-white">CPU Settings (x265 Fallback)</h3>
+                      <h3 className="text-lg font-semibold text-white">⚙️ CPU Settings (x265 Fallback)</h3>
+                      <p className="text-sm text-gray-400">Utilisé uniquement si le GPU n'est pas disponible ou force_gpu=false</p>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">CPU Preset (Fallback)</label>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            CPU Preset (libx265)
+                            <span className="ml-2 text-xs text-blue-400">(ultrafast-veryslow)</span>
+                          </label>
                           <select
                             value={config.ffmpeg?.cpu_preset || config.cpu_preset || "medium"}
                             onChange={(e) => {
@@ -2772,21 +2873,30 @@
                             }}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           >
-                            <option value="ultrafast">Ultrafast</option>
+                            <option value="ultrafast">Ultrafast (⚡ Très rapide, qualité faible)</option>
                             <option value="superfast">Superfast</option>
                             <option value="veryfast">Veryfast</option>
                             <option value="faster">Faster</option>
                             <option value="fast">Fast</option>
-                            <option value="medium">Medium</option>
-                            <option value="slow">Slow</option>
-                            <option value="slower">Slower</option>
-                            <option value="veryslow">Veryslow</option>
+                            <option value="medium">Medium (Recommandé - Équilibré)</option>
+                            <option value="slow">Slow (Lent, bonne qualité)</option>
+                            <option value="slower">Slower (Très lent)</option>
+                            <option value="veryslow">Veryslow (⏱️ Extrêmement lent)</option>
                           </select>
-                          <p className="text-xs text-gray-400 mt-1">Used when GPU not available</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Contrôle le compromis vitesse vs qualité pour l'encodage CPU (x265)</em>
+                            <br />
+                            <strong>Recommandé:</strong> medium (équilibre vitesse/qualité)
+                            <br />
+                            <strong>Rapide:</strong> fast/faster | <strong>Qualité max:</strong> slow/slower
+                          </p>
                         </div>
 
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">CPU CRF (Constant Rate Factor)</label>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            CPU CRF - Constant Rate Factor
+                            <span className="ml-2 text-xs text-blue-400">(0-51)</span>
+                          </label>
                           <input
                             type="number"
                             min="0"
@@ -2798,32 +2908,117 @@
                             }}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
-                          <p className="text-xs text-gray-400 mt-1">0-51, lower = better quality (23 recommended)</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Facteur de qualité constant pour x265 - plus bas = meilleure qualité</em>
+                            <br />
+                            <strong>Min:</strong> 0 (lossless, énorme) | <strong>Max:</strong> 51 (qualité minimale)
+                            <br />
+                            <strong>Recommandé:</strong> 20-22 (haute qualité), 23-25 (équilibré), 26-28 (économie)
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="flex items-center cursor-pointer">
+                            <input type="checkbox" checked={config.ffmpeg?.two_pass || false} onChange={(e) => updateConfigNested("ffmpeg", "two_pass", e.target.checked)} className="mr-2" />
+                            <span className="text-sm text-gray-300">Two-Pass Encoding</span>
+                          </label>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Encodage en deux passes pour meilleure allocation du bitrate (CPU x265 seulement)</em>
+                            <br />
+                            <strong>Attention:</strong> 2x plus lent, meilleure allocation bitrate
+                            <br />
+                            Non supporté avec NVENC (utilise multipass à la place)
+                          </p>
                         </div>
                       </div>
                     </div>
 
-                    {/* Audio Settings */}
+                    {/* ===== COMMON SETTINGS ===== */}
                     <div className="space-y-4 pt-4 border-t border-gray-700">
-                      <h3 className="text-lg font-semibold text-white">Audio Settings</h3>
+                      <h3 className="text-lg font-semibold text-white">🔧 Paramètres Communs (GPU & CPU)</h3>
+                      <p className="text-sm text-gray-400">Paramètres applicables aux deux modes d'encodage</p>
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">Audio Codec</label>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            HEVC Profile
+                            <span className="ml-2 text-xs text-blue-400">(main/main10)</span>
+                          </label>
+                          <select
+                            value={config.ffmpeg?.profile || "main10"}
+                            onChange={(e) => updateConfigNested("ffmpeg", "profile", e.target.value)}
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          >
+                            <option value="main">Main (8-bit, compatible)</option>
+                            <option value="main10">Main10 (10-bit, meilleure qualité - Recommandé)</option>
+                          </select>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Profil HEVC/H.265 - Main10 offre de meilleures gradations de couleurs</em>
+                            <br />
+                            <strong>Recommandé:</strong> main10 (10-bit, meilleure gradation couleurs)
+                            <br />
+                            <strong>Compatibilité:</strong> main (8-bit, plus compatible appareils anciens)
+                          </p>
+                        </div>
+
+                        <div>
+                          <label className="flex items-center cursor-pointer">
+                            <input 
+                              type="checkbox" 
+                              checked={config.ffmpeg?.force_gpu !== false} 
+                              onChange={(e) => updateConfigNested("ffmpeg", "force_gpu", e.target.checked)} 
+                              className="mr-2" 
+                            />
+                            <span className="text-sm text-gray-300">
+                              Force GPU Encoding
+                              <span className="ml-2 text-xs text-blue-400">(skip GPU test)</span>
+                            </span>
+                          </label>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Force l'utilisation du GPU sans test préalable de disponibilité</em>
+                            <br />
+                            <strong>Recommandé:</strong> Désactivé (laisse la détection automatique)
+                            <br />
+                            Activer uniquement si GPU détecté mais test échoue
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ===== AUDIO SETTINGS ===== */}
+                    <div className="space-y-4 pt-4 border-t border-gray-700">
+                      <h3 className="text-lg font-semibold text-white">🔊 Audio Settings</h3>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Audio Codec
+                            <span className="ml-2 text-xs text-blue-400">(copy/aac/ac3/opus)</span>
+                          </label>
                           <select
                             value={config.ffmpeg?.audio_codec || "copy"}
                             onChange={(e) => updateConfigNested("ffmpeg", "audio_codec", e.target.value)}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           >
-                            <option value="copy">Copy (No Re-encode)</option>
-                            <option value="aac">AAC</option>
-                            <option value="ac3">AC3</option>
-                            <option value="opus">Opus</option>
+                            <option value="copy">Copy (Pas de ré-encodage - Recommandé)</option>
+                            <option value="aac">AAC (Compatibilité maximale)</option>
+                            <option value="ac3">AC3 (Dolby Digital)</option>
+                            <option value="opus">Opus (Meilleure qualité/taille)</option>
                           </select>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Codec audio à utiliser - copy préserve la piste originale sans perte</em>
+                            <br />
+                            <strong>Recommandé:</strong> copy (préserve qualité audio originale)
+                            <br />
+                            Re-encoder uniquement si nécessaire (compatibilité)
+                          </p>
                         </div>
 
                         <div>
-                          <label className="block text-sm text-gray-300 mb-2">Audio Bitrate (if re-encoding)</label>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Audio Bitrate (si ré-encodage)
+                            <span className="ml-2 text-xs text-blue-400">(64-320 kbps)</span>
+                          </label>
                           <input
                             type="number"
                             min="64"
@@ -2834,34 +3029,25 @@
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                             disabled={config.ffmpeg?.audio_codec === "copy"}
                           />
-                          <p className="text-xs text-gray-400 mt-1">kbps (192 recommended)</p>
+                          <p className="text-xs text-gray-400 mt-1">
+                            <em>Débit binaire audio en kilobits par seconde (uniquement si ré-encodage)</em>
+                            <br />
+                            <strong>Min:</strong> 64 kbps (mono/voix) | <strong>Max:</strong> 320 kbps (musique)
+                            <br />
+                            <strong>Recommandé:</strong> 128-192 kbps (stéréo), 256 kbps (5.1)
+                          </p>
                         </div>
                       </div>
                     </div>
 
-                    {/* Advanced Settings */}
-                    <div className="space-y-4 pt-4 border-t border-gray-700">
-                      <h3 className="text-lg font-semibold text-white">Advanced</h3>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-2">Profile</label>
-                          <select
-                            value={config.ffmpeg?.profile || "main10"}
-                            onChange={(e) => updateConfigNested("ffmpeg", "profile", e.target.value)}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          >
-                            <option value="main">Main</option>
-                            <option value="main10">Main10 (10-bit)</option>
-                          </select>
-                        </div>
-
-                        <div className="flex items-center">
-                          <label className="flex items-center cursor-pointer">
-                            <input type="checkbox" checked={config.ffmpeg?.two_pass || false} onChange={(e) => updateConfigNested("ffmpeg", "two_pass", e.target.checked)} className="mr-2" />
-                            <span className="text-sm text-gray-300">Enable Two-Pass Encoding</span>
-                          </label>
-                        </div>
+                    {/* Command Preview */}
+                    <div className="mt-4 p-3 bg-gray-800 rounded border border-gray-600">
+                      <div className="text-xs text-gray-400 mb-1">Commande FFmpeg (aperçu):</div>
+                      <div className="text-xs text-green-400 font-mono break-all">
+                        ffmpeg -i input.mkv -c:v hevc_nvenc -preset {config.encode_preset || "p7"} -rc {config.ffmpeg?.rc_mode || "vbr_hq"} -cq {config.cq || 24} -b:v{" "}
+                        {config.ffmpeg?.bitrate || "3M"} -maxrate {config.ffmpeg?.maxrate || "6M"} -profile:v main10 -pix_fmt p010le -spatial-aq {config.ffmpeg?.spatial_aq !== false ? "1" : "0"}{" "}
+                        -temporal-aq {config.ffmpeg?.temporal_aq !== false ? "1" : "0"} -aq-strength {config.ffmpeg?.aq_strength || 8} -bf {config.ffmpeg?.bframes || 3} -b_ref_mode{" "}
+                        {config.ffmpeg?.b_ref_mode || "middle"} -rc-lookahead {config.ffmpeg?.lookahead || 32} -multipass {config.ffmpeg?.multipass || "fullres"} -c:a copy output.mkv
                       </div>
                     </div>
                   </>
@@ -3083,6 +3269,17 @@
                           <span className="text-sm text-gray-300">Skip re-encoding HEVC/x265 files</span>
                         </label>
                         <p className="text-xs text-gray-400 ml-6">Files already in HEVC format will be copied without re-encoding (faster but no size reduction)</p>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.simulation_mode || false}
+                            onChange={(e) => updateConfig("advanced.simulation_mode", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">🧪 Simulation mode (testing only)</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Skip encoding entirely - just copy files to test download/upload pipeline</p>
                       </div>
                     </div>
 
@@ -3382,6 +3579,7 @@
         const shutdownWhenFinishedRef = React.useRef(shutdownWhenFinished);
         React.useEffect(() => {
           shutdownWhenFinishedRef.current = shutdownWhenFinished;
+
         }, [shutdownWhenFinished]);
 
         // Load blockLargerEncoded preference from localStorage

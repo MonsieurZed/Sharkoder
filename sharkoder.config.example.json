@@ -59,6 +59,8 @@
     "verify_checksums": true,
     "create_backups": true,
     "_comment_skip_hevc": "Set to true to skip re-encoding files already in HEVC/x265 format",
-    "skip_hevc_reencode": false
+    "skip_hevc_reencode": false,
+    "_comment_simulation": "Set to true to skip encoding entirely (just copy files for testing queue/transfer)",
+    "simulation_mode": false
   }
 }

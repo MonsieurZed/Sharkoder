@@ -5,6 +5,15 @@ const { logger, formatBytes, isVideoFile } = require("./utils");
 // WebDAV client (lazy loaded as ES module)
 let webdavModule = null;
 
+/**
+ * Generate backup filename: <filename>.bak.<ext>
+ * Example: video.mkv -> video.bak.mkv
+ */
+function getBackupPath(originalPath) {
+  const parsedPath = path.posix.parse(originalPath);
+  return path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
+}
+
 class WebDAVManager {
   constructor(config) {
     this.config = config;
@@ -248,7 +257,7 @@ class WebDAVManager {
     // If remotePath already starts with remote_path, use it as-is
     // Otherwise, join with remote_path
     const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    const backupPath = getBackupPath(fullRemotePath);
 
     try {
       // Get file size
@@ -256,7 +265,7 @@ class WebDAVManager {
       const totalSize = stats.size;
       let uploadedSize = 0;
 
-      // Rename existing file to .original.bak before uploading
+      // Rename existing file to .bak.<ext> before uploading
       try {
         const remoteExists = await this.client.exists(fullRemotePath);
         if (remoteExists) {
@@ -381,13 +390,13 @@ class WebDAVManager {
   }
 
   /**
-   * Delete the backup file (.original.bak) after successful upload
+   * Delete the backup file (.bak.<ext>) after successful upload
    */
   async deleteBackupFile(remotePath) {
     await this.ensureConnection();
 
     const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    const backupPath = getBackupPath(fullRemotePath);
 
     try {
       const exists = await this.client.exists(backupPath);
@@ -450,13 +459,13 @@ class WebDAVManager {
   }
 
   /**
-   * Restore the backup file (.original.bak) if upload failed
+   * Restore the backup file (.bak.<ext>) if upload failed
    */
   async restoreBackupFile(remotePath) {
     await this.ensureConnection();
 
     const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    const backupPath = getBackupPath(fullRemotePath);
 
     try {
       const backupExists = await this.client.exists(backupPath);

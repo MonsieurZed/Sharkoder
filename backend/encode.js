@@ -56,6 +56,11 @@ class VideoEncoder extends EventEmitter {
             throw new Error("No video stream found");
           }
 
+          // Log detailed video stream info for debugging resolution issues
+          logger.info(`[VIDEO PROBE] File: ${path.basename(inputPath)}`);
+          logger.info(`[VIDEO PROBE] Codec: ${videoStream.codec_name}, Width: ${videoStream.width}, Height: ${videoStream.height}`);
+          logger.info(`[VIDEO PROBE] Resolution: ${videoStream.width}x${videoStream.height}`);
+
           const info = {
             duration: parseFloat(metadata.format.duration) || 0,
             size: parseInt(metadata.format.size) || 0,

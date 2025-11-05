@@ -3,6 +3,15 @@ const path = require("path");
 const fs = require("fs-extra");
 const { logger, retry, isVideoFile, formatBytes, isNetworkError } = require("./utils");
 
+/**
+ * Generate backup filename: <filename>.bak.<ext>
+ * Example: video.mkv -> video.bak.mkv
+ */
+function getBackupPath(originalPath) {
+  const parsedPath = path.posix.parse(originalPath);
+  return path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
+}
+
 class SftpManager {
   constructor(config) {
     this.config = config;
@@ -302,7 +311,7 @@ class SftpManager {
     await this.ensureConnection();
 
     const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    const backupPath = getBackupPath(fullRemotePath);
 
     try {
       // Get file size for progress tracking
@@ -312,7 +321,7 @@ class SftpManager {
       let resumeFrom = 0;
       let writeFlags = "w"; // Default: overwrite
 
-      // Rename existing file to .original.bak before uploading
+      // Rename existing file to .bak.<ext> before uploading
       try {
         const remoteExists = await this.sftp.exists(fullRemotePath);
         if (remoteExists) {
@@ -409,13 +418,13 @@ class SftpManager {
   }
 
   /**
-   * Delete the backup file (.original.bak) after successful upload
+   * Delete the backup file (.bak.<ext>) after successful upload
    */
   async deleteBackupFile(remotePath) {
     await this.ensureConnection();
 
     const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    const backupPath = getBackupPath(fullRemotePath);
 
     try {
       const exists = await this.sftp.exists(backupPath);
@@ -454,13 +463,13 @@ class SftpManager {
   }
 
   /**
-   * Restore the backup file (.original.bak) if upload failed
+   * Restore the backup file (.bak.<ext>) if upload failed
    */
   async restoreBackupFile(remotePath) {
     await this.ensureConnection();
 
     const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
-    const backupPath = fullRemotePath + ".original.bak";
+    const backupPath = getBackupPath(fullRemotePath);
 
     try {
       const backupExists = await this.sftp.exists(backupPath);

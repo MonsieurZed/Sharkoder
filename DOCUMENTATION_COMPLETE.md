@@ -131,12 +131,12 @@ npm start
 ```
 1. Job prêt pour upload
    ↓
-2. Renommer: fichier.mkv → fichier.mkv.original.bak
+2. Renommer: fichier.mkv → fichier.bak.mkv
    ↓
 3. Upload fichier encodé → fichier.mkv
    ↓
-4a. SUCCESS → Supprimer .bak ✅
-4b. FAILED → Restaurer .bak → Fichier intact ✅
+4a. SUCCESS → Supprimer .bak.mkv ✅
+4b. FAILED → Restaurer .bak.mkv → Fichier intact ✅
 ```
 
 **Avantages** :
@@ -351,10 +351,10 @@ Sharkoder/
    └→ Sortie: local_temp/encoded/
 
 4. UPLOAD
-   └→ Backup: Renommer original → .original.bak
+   └→ Backup: Renommer original → .bak.<ext>
    └→ Upload: SFTP (fiable)
-   └→ Success: Supprimer .bak
-   └→ Failed: Restaurer .bak
+   └→ Success: Supprimer .bak.<ext>
+   └→ Failed: Restaurer .bak.<ext>
 
 5. CLEANUP
    └→ Supprimer fichiers locaux (downloaded + encoded)
@@ -570,7 +570,7 @@ ffprobe -i "fichier.mkv" -show_streams
 
 ### Backup
 
-- Fichiers originaux protégés avec `.original.bak`
+- Fichiers originaux protégés avec `.bak.<ext>` (ex: `video.bak.mkv`)
 - Restoration automatique en cas d'échec
 - Cache local nettoyé après succès
 

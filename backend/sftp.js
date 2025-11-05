@@ -321,15 +321,22 @@ class SftpManager {
       let resumeFrom = 0;
       let writeFlags = "w"; // Default: overwrite
 
-      // Rename existing file to .bak.<ext> before uploading
-      try {
-        const remoteExists = await this.sftp.exists(fullRemotePath);
-        if (remoteExists) {
-          logger.info(`Backing up original file: ${fullRemotePath} -> ${backupPath}`);
-          await this.sftp.rename(fullRemotePath, backupPath);
+      // Check if server backups are enabled (default: true)
+      const createBackups = this.config.advanced?.create_backups !== false;
+
+      // Rename existing file to .bak.<ext> before uploading (if enabled)
+      if (createBackups) {
+        try {
+          const remoteExists = await this.sftp.exists(fullRemotePath);
+          if (remoteExists) {
+            logger.info(`Backing up original file: ${fullRemotePath} -> ${backupPath}`);
+            await this.sftp.rename(fullRemotePath, backupPath);
+          }
+        } catch (error) {
+          logger.warn(`Could not backup original file (may not exist):`, error.message);
         }
-      } catch (error) {
-        logger.warn(`Could not backup original file (may not exist):`, error.message);
+      } else {
+        logger.info(`Server backup disabled (create_backups=false), will overwrite file: ${fullRemotePath}`);
       }
 
       // Check if remote file exists for resume

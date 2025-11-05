@@ -370,19 +370,20 @@ class QueueManager extends EventEmitter {
         await this.stop();
       }
 
-      // Get all jobs
+      // Get all jobs EXCEPT completed ones
       const allJobs = await getAllJobs();
+      const jobsToDelete = allJobs.filter(job => job.status !== 'completed');
 
-      // Remove each job
-      for (const job of allJobs) {
+      // Remove each job (except completed)
+      for (const job of jobsToDelete) {
         await this.cleanupJobFiles(job);
         await deleteJob(job.id);
       }
 
-      logger.info(`Cleared ${allJobs.length} jobs from queue`);
-      this.emit("queueCleared", { count: allJobs.length });
+      logger.info(`Cleared ${jobsToDelete.length} jobs from queue (kept ${allJobs.length - jobsToDelete.length} completed jobs)`);
+      this.emit("queueCleared", { count: jobsToDelete.length });
 
-      return allJobs.length;
+      return jobsToDelete.length;
     } catch (error) {
       logger.error("Failed to clear queue:", error);
       throw error;

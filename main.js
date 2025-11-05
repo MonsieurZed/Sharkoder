@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs-extra");
 
@@ -14,7 +14,7 @@ const { initDatabase } = require("./backend/db");
 const { QueueManager } = require("./backend/queue");
 const { TransferManager } = require("./backend/transfer");
 const { ProgressFileManager } = require("./backend/progressfile");
-const { logger } = require("./backend/utils");
+const { logger, formatBytes } = require("./backend/utils");
 const { WebDAVExplorer } = require("./backend/webdav-explorer");
 
 let mainWindow;
@@ -325,6 +325,154 @@ const setupIpcHandlers = () => {
       return { success: false, error: error.message };
     }
   });
+
+  // Delete file or empty folder via WebDAV
+  ipcMain.handle("webdav:delete", async (event, remotePath, isDirectory = false) => {
+    try {
+      if (!webdavExplorer) {
+        return { success: false, error: "WebDAV not initialized" };
+      }
+
+      const result = await webdavExplorer.deleteFileOrFolder(remotePath, isDirectory);
+      return { success: result };
+    } catch (error) {
+      logger.error("WebDAV delete failed:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Download file or folder to default directory
+  ipcMain.handle("webdav:downloadToDefault", async (event, remotePath, isDirectory = false) => {
+    try {
+      if (!webdavExplorer) {
+        return { success: false, error: "WebDAV not initialized" };
+      }
+
+      // Load config to get default download path (bypass require cache)
+      delete require.cache[require.resolve("./sharkoder.config.json")];
+      const userConfig = require("./sharkoder.config.json");
+      const downloadPath = userConfig.default_download_path;
+
+      logger.info(`📂 Download path from config: "${downloadPath || 'NOT SET'}"`);
+
+      if (!downloadPath) {
+        return { success: false, error: "Default download path not configured. Please set it in Settings." };
+      }
+
+      // Ensure download directory exists
+      try {
+        await fs.ensureDir(downloadPath);
+      } catch (error) {
+        logger.error(`Failed to create download directory: ${downloadPath}`, error);
+        return { success: false, error: `Cannot create download directory: ${error.message}` };
+      }
+
+      logger.info(`📥 Starting download: ${remotePath} (directory: ${isDirectory}) -> ${downloadPath}`);
+
+      if (isDirectory) {
+        // Download folder recursively
+        const result = await webdavExplorer.downloadFolderRecursive(remotePath, downloadPath, (progress) => {
+          // Send progress updates to renderer
+          event.sender.send("download:progress", { remotePath, ...progress });
+        });
+        
+        return { 
+          success: true, 
+          message: `Downloaded ${result.filesDownloaded} files (${formatBytes(result.totalSize)})`,
+          ...result 
+        };
+      } else {
+        // Download single file
+        const localPath = await webdavExplorer.downloadToDirectory(remotePath, downloadPath, (progress) => {
+          // Send progress updates to renderer
+          event.sender.send("download:progress", { remotePath, ...progress });
+        });
+        
+        return { 
+          success: true, 
+          localPath,
+          message: `File downloaded to: ${localPath}` 
+        };
+      }
+    } catch (error) {
+      logger.error("WebDAV download failed:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // FFmpeg preset management
+  ipcMain.handle("preset:saveFFmpeg", async (event, preset) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      logger.info("💾 Saving FFmpeg preset to server...");
+
+      // Save preset as JSON file to server root
+      const presetJson = JSON.stringify(preset, null, 2);
+      const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, "ffmpeg_preset.json");
+      
+      await fs.writeFile(tempPresetPath, presetJson, "utf8");
+      
+      // Upload to server root WITHOUT creating backup (it's just a config file)
+      // Temporarily disable backup creation
+      const originalBackupSetting = transferManager.config.advanced?.create_backups;
+      if (!transferManager.config.advanced) transferManager.config.advanced = {};
+      transferManager.config.advanced.create_backups = false;
+      
+      const result = await transferManager.uploadFile(tempPresetPath, "/ffmpeg_preset.json");
+      
+      // Restore original backup setting
+      transferManager.config.advanced.create_backups = originalBackupSetting;
+      
+      // Cleanup temp file
+      await fs.remove(tempPresetPath);
+      
+      if (result.success) {
+        logger.info("✅ FFmpeg preset saved to server: /ffmpeg_preset.json");
+        return { success: true, path: "/ffmpeg_preset.json" };
+      } else {
+        return { success: false, error: result.error };
+      }
+    } catch (error) {
+      logger.error("Failed to save FFmpeg preset:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("preset:loadFFmpeg", async (event) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      logger.info("📥 Loading FFmpeg preset from server...");
+
+      // Download preset from server root
+      const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, "ffmpeg_preset_downloaded.json");
+      
+      const result = await transferManager.downloadFile("/ffmpeg_preset.json", tempPresetPath);
+      
+      if (result.success) {
+        // Read and parse the preset
+        const presetJson = await fs.readFile(tempPresetPath, "utf8");
+        const preset = JSON.parse(presetJson);
+        
+        // Cleanup temp file
+        await fs.remove(tempPresetPath);
+        
+        logger.info("✅ FFmpeg preset loaded from server");
+        return { success: true, preset };
+      } else {
+        return { success: false, error: result.error || "Preset file not found on server" };
+      }
+    } catch (error) {
+      logger.error("Failed to load FFmpeg preset:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
 
   // Queue operations
   ipcMain.handle("queue:addJob", async (event, filePath, fileInfo) => {
@@ -667,10 +815,23 @@ const setupIpcHandlers = () => {
         return { success: false, error: `Local ${type} backup not found` };
       }
 
-      // Upload back to server at original location
-      await transferManager.uploadFile(sourcePath, job.filepath);
+      // Get file size for ETA calculation
+      const stats = await fs.stat(sourcePath);
+      const fileSize = stats.size;
 
-      logger.info(`Restored ${type} file from local backup: ${job.filepath}`);
+      logger.info(`🔄 Restoring ${type} file from local backup: ${formatBytes(fileSize)}`);
+
+      // Upload back to server at original location with progress
+      await transferManager.uploadFile(sourcePath, job.filepath, (progress) => {
+        event.sender.send("restore:progress", {
+          jobId,
+          type: "upload",
+          ...progress,
+          filename: path.basename(sourcePath)
+        });
+      });
+
+      logger.info(`✅ Restored ${type} file from local backup: ${job.filepath}`);
       return { success: true };
     } catch (error) {
       logger.error(`Failed to restore from local:`, error);
@@ -699,10 +860,31 @@ const setupIpcHandlers = () => {
         return { success: false, error: "Server backup not found" };
       }
 
-      // Restore: rename .bak.<ext> back to original filename
+      logger.info(`🔄 Restoring from server backup using MOVE: ${serverBackupPath} -> ${job.filepath}`);
+
+      // Send initial progress
+      event.sender.send("restore:progress", {
+        jobId,
+        type: "move",
+        step: "Moving backup to original location",
+        percent: 50,
+        filename: path.basename(job.filepath)
+      });
+
+      // Simply rename/move the backup file back to original location
+      // This overwrites the encoded file with the backup
       await transferManager.renameFile(serverBackupPath, job.filepath);
 
-      logger.info(`Restored original file from server backup: ${job.filepath}`);
+      // Send completion progress
+      event.sender.send("restore:progress", {
+        jobId,
+        type: "move",
+        step: "Restore completed",
+        percent: 100,
+        filename: path.basename(job.filepath)
+      });
+
+      logger.info(`✅ Restored original file from server backup (instant move): ${job.filepath}`);
       return { success: true };
     } catch (error) {
       logger.error(`Failed to restore from server:`, error);
@@ -783,6 +965,25 @@ const setupIpcHandlers = () => {
       return { success: true };
     } catch (error) {
       logger.error("Failed to open folder:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("system:selectFolder", async (event, defaultPath) => {
+    try {
+      const result = await dialog.showOpenDialog(mainWindow, {
+        properties: ["openDirectory"],
+        defaultPath: defaultPath || undefined,
+        title: "Select Directory"
+      });
+
+      if (result.canceled) {
+        return { success: false, canceled: true };
+      }
+
+      return { success: true, path: result.filePaths[0] };
+    } catch (error) {
+      logger.error("Failed to select folder:", error);
       return { success: false, error: error.message };
     }
   });

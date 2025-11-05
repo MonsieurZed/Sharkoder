@@ -10,6 +10,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
   webdavGetFolderStats: (remotePath) => ipcRenderer.invoke("webdav:getFolderStats", remotePath),
   webdavScanFolderRecursive: (remotePath) => ipcRenderer.invoke("webdav:scanFolderRecursive", remotePath),
   webdavGetFileInfo: (remotePath) => ipcRenderer.invoke("webdav:getFileInfo", remotePath),
+  webdavDelete: (remotePath, isDirectory) => ipcRenderer.invoke("webdav:delete", remotePath, isDirectory),
+  webdavDownloadToDefault: (remotePath, isDirectory) => ipcRenderer.invoke("webdav:downloadToDefault", remotePath, isDirectory),
+
+  // FFmpeg preset management
+  saveFFmpegPreset: (preset) => ipcRenderer.invoke("preset:saveFFmpeg", preset),
+  loadFFmpegPreset: () => ipcRenderer.invoke("preset:loadFFmpeg"),
 
   // WebDAV cache operations
   syncCache: () => ipcRenderer.invoke("webdav:syncCache"),
@@ -55,6 +61,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   // System operations
   openFolder: (folderPath) => ipcRenderer.invoke("system:openFolder", folderPath),
+  selectFolder: (defaultPath) => ipcRenderer.invoke("system:selectFolder", defaultPath),
   toggleDevTools: () => ipcRenderer.invoke("system:toggleDevTools"),
   systemShutdown: () => ipcRenderer.invoke("system:shutdown"),
   playFile: (remotePath) => ipcRenderer.invoke("playFile", remotePath),
@@ -65,6 +72,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
   restoreFromLocal: (jobId, type) => ipcRenderer.invoke("restore:fromLocal", jobId, type),
   restoreFromServer: (jobId) => ipcRenderer.invoke("restore:fromServer", jobId),
   backupCheckExists: (jobId) => ipcRenderer.invoke("backup:checkExists", jobId),
+  onRestoreProgress: (callback) => {
+    ipcRenderer.on("restore:progress", (event, data) => callback(data));
+  },
 
   // Event listeners
   onQueueProgress: (callback) => {

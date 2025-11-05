@@ -740,6 +740,144 @@ class WebDAVExplorer {
   }
 
   /**
+   * Delete a file or empty folder
+   * @param {string} remotePath - Path relative to base path
+   * @param {boolean} isDirectory - True if deleting a directory
+   * @returns {Promise<boolean>} True if deleted successfully
+   */
+  async deleteFileOrFolder(remotePath, isDirectory = false) {
+    await this.ensureConnection();
+
+    const basePath = this.config.webdav_path || this.config.remote_path || "/";
+    const fullRemotePath = path.posix.join(basePath, remotePath);
+
+    try {
+      // Check if exists
+      const exists = await this.client.exists(fullRemotePath);
+      if (!exists) {
+        logger.warn(`Cannot delete - path does not exist: ${fullRemotePath}`);
+        return false;
+      }
+
+      // If it's a directory, check if it's empty
+      if (isDirectory) {
+        const contents = await this.client.getDirectoryContents(fullRemotePath);
+        if (contents.length > 0) {
+          logger.warn(`Cannot delete - directory is not empty: ${fullRemotePath}`);
+          throw new Error("Directory is not empty. Please delete files inside first.");
+        }
+      }
+
+      // Delete the file or folder
+      await this.client.deleteFile(fullRemotePath);
+      logger.info(`🗑️ Deleted ${isDirectory ? 'folder' : 'file'}: ${fullRemotePath}`);
+      return true;
+    } catch (error) {
+      logger.error(`Failed to delete ${fullRemotePath}:`, error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Download a file to a local directory
+   * @param {string} remotePath - Path relative to base path
+   * @param {string} localDirectory - Local directory where to save the file
+   * @param {function} onProgress - Progress callback
+   * @returns {Promise<string>} Local file path
+   */
+  async downloadToDirectory(remotePath, localDirectory, onProgress = null) {
+    const fs = require("fs-extra");
+    
+    // Ensure directory exists
+    await fs.ensureDir(localDirectory);
+    
+    // Get filename from remote path
+    const filename = path.basename(remotePath);
+    const localPath = path.join(localDirectory, filename);
+    
+    logger.info(`📥 Downloading file: ${remotePath} -> ${localPath}`);
+    
+    try {
+      await this.downloadFile(remotePath, localPath, onProgress);
+      return localPath;
+    } catch (error) {
+      logger.error(`Failed to download file to directory:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Download a folder recursively to a local directory
+   * @param {string} remoteFolderPath - Remote folder path relative to base path
+   * @param {string} localDirectory - Local directory where to save the folder
+   * @param {function} onProgress - Progress callback
+   * @returns {Promise<object>} Download result with stats
+   */
+  async downloadFolderRecursive(remoteFolderPath, localDirectory, onProgress = null) {
+    await this.ensureConnection();
+
+    const fs = require("fs-extra");
+    const basePath = this.config.webdav_path || this.config.remote_path || "/";
+    const fullRemotePath = path.posix.join(basePath, remoteFolderPath);
+    
+    logger.info(`📁 Downloading folder recursively: ${fullRemotePath} -> ${localDirectory}`);
+
+    let filesDownloaded = 0;
+    let totalSize = 0;
+    const errors = [];
+
+    try {
+      // Get all files in the folder recursively
+      const allFiles = await this.scanFolderRecursive(remoteFolderPath);
+      
+      if (allFiles.length === 0) {
+        logger.warn(`No files found in folder: ${remoteFolderPath}`);
+        return { success: true, filesDownloaded: 0, totalSize: 0, errors: [] };
+      }
+
+      logger.info(`Found ${allFiles.length} files to download`);
+
+      // Download each file
+      for (const file of allFiles) {
+        try {
+          // Get relative path from folder root
+          const relativePath = file.path.substring(remoteFolderPath.length);
+          const localFilePath = path.join(localDirectory, relativePath);
+          
+          // Ensure parent directory exists
+          await fs.ensureDir(path.dirname(localFilePath));
+          
+          // Download file
+          await this.downloadFile(file.path, localFilePath, onProgress);
+          
+          filesDownloaded++;
+          totalSize += file.size || 0;
+          
+          logger.info(`✅ Downloaded (${filesDownloaded}/${allFiles.length}): ${file.name}`);
+          
+        } catch (error) {
+          logger.error(`Failed to download ${file.path}:`, error);
+          errors.push({ file: file.path, error: error.message });
+        }
+      }
+
+      logger.info(`✅ Folder download complete: ${filesDownloaded}/${allFiles.length} files, ${formatBytes(totalSize)}`);
+      
+      return {
+        success: true,
+        filesDownloaded,
+        totalFiles: allFiles.length,
+        totalSize,
+        errors,
+      };
+      
+    } catch (error) {
+      logger.error(`Failed to download folder ${remoteFolderPath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Build complete cache in one efficient pass
    * Scans the entire directory tree recursively and returns stats for ALL folders
    * Much more efficient than calling getFolderStats multiple times

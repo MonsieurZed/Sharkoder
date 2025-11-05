@@ -162,9 +162,11 @@ class VideoEncoder extends EventEmitter {
       // Get video info for progress calculation
       const videoInfo = await this.getVideoInfo(inputPath);
       const totalDuration = videoInfo.duration;
+      const totalFrames = Math.round(totalDuration * videoInfo.video.fps);
 
       logger.info(`Starting encoding: ${inputPath} -> ${outputPath}`);
       logger.info(`Video info: ${videoInfo.video.width}x${videoInfo.video.height}, ${formatDuration(totalDuration)}, ${videoInfo.video.codec}`);
+      logger.info(`Total frames: ${totalFrames} @ ${videoInfo.video.fps.toFixed(2)} fps`);
       logger.info(`Audio tracks: ${videoInfo.audio.length} (${videoInfo.audio.map((a) => `${a.language}:${a.codec}`).join(", ")})`);
       logger.info(`Subtitle tracks: ${videoInfo.subtitles.length} (${videoInfo.subtitles.map((s) => `${s.language}:${s.codec}`).join(", ")})`);
       logger.info(`Encoder mode: ${this.gpuAvailable ? "GPU (NVENC)" : "CPU (x265)"}`);
@@ -241,22 +243,49 @@ class VideoEncoder extends EventEmitter {
           })
           .on("progress", (progress) => {
             try {
-              // Parse timemark (format: 00:01:23.45)
-              const timeParts = progress.timemark.split(":");
-              const hours = parseInt(timeParts[0]) || 0;
-              const minutes = parseInt(timeParts[1]) || 0;
-              const seconds = parseFloat(timeParts[2]) || 0;
-
-              const currentTime = hours * 3600 + minutes * 60 + seconds;
-              const percent = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
+              // NVENC (GPU) progress calculation:
+              // FFmpeg progress.timemark is sometimes unreliable with NVENC
+              // Use frames processed instead for more accurate progress
+              
+              let currentTime = 0;
+              let percent = 0;
+              
+              if (progress.frames && totalFrames > 0) {
+                // Method 1: Use frames (most reliable for NVENC)
+                const framesProcessed = parseInt(progress.frames) || 0;
+                percent = (framesProcessed / totalFrames) * 100;
+                currentTime = (framesProcessed / videoInfo.video.fps);
+                
+                logger.debug(`[NVENC Progress] Frames: ${framesProcessed}/${totalFrames} (${percent.toFixed(2)}%)`);
+              } else if (progress.timemark) {
+                // Method 2: Fallback to timemark parsing (CPU encoding or when frames not available)
+                const timeParts = progress.timemark.split(":");
+                const hours = parseInt(timeParts[0]) || 0;
+                const minutes = parseInt(timeParts[1]) || 0;
+                const seconds = parseFloat(timeParts[2]) || 0;
+                
+                currentTime = hours * 3600 + minutes * 60 + seconds;
+                percent = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
+              }
 
               const elapsedSeconds = (Date.now() - this.startTime) / 1000;
-              const eta = calculateETA(percent, elapsedSeconds);
+              
+              // FIXED: Always calculate ETA even for small progress
+              let eta = null;
+              if (percent > 0.1 && elapsedSeconds > 5) {
+                const totalEstimatedSeconds = (elapsedSeconds * 100) / percent;
+                const remainingSeconds = totalEstimatedSeconds - elapsedSeconds;
+                
+                // Only validate that ETA is reasonable (not negative, not > 48h)
+                if (isFinite(remainingSeconds) && remainingSeconds >= 0 && remainingSeconds <= 172800) {
+                  eta = Math.round(remainingSeconds);
+                }
+              }
 
               // Log ETA calculation occasionally for debugging
               if (Math.random() < 0.05) {
                 // 5% of the time
-                logger.debug(`ETA calculation: ${percent.toFixed(2)}% complete, ${elapsedSeconds.toFixed(0)}s elapsed, ETA: ${eta ? eta + "s" : "null"}`);
+                logger.debug(`[GPU] ETA: ${percent.toFixed(2)}% | elapsed: ${elapsedSeconds.toFixed(0)}s | ETA: ${eta ? eta + "s" : "calculating..."} | FPS: ${progress.currentFps || 0}`);
               }
 
               const progressData = {

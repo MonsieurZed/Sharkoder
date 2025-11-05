@@ -2139,14 +2139,6 @@
                                             <span className="text-gray-400">Size:</span>
                                             <span className="text-white font-mono font-bold">{formatSize(job.size)}</span>
                                           </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Resolution:</span>
-                                            <span className="text-white font-mono">{job.resolution_before || "N/A"}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Bitrate:</span>
-                                            <span className="text-white font-mono">{job.bitrate_before || "N/A"}</span>
-                                          </div>
                                         </div>
                                       </div>
 
@@ -2164,16 +2156,6 @@
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Size:</span>
                                             <span className="text-white font-mono font-bold">{formatSize(job.size_after)}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Resolution:</span>
-                                            <span className="text-white font-mono">{job.resolution_after || job.resolution_before || "N/A"}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Savings:</span>
-                                            <span className={`font-mono font-bold ${savings && savings.saved > 0 ? "text-green-400" : "text-red-400"}`}>
-                                              {savings ? (savings.saved > 0 ? `-${savings.percent}%` : `+${Math.abs(savings.percent)}%`) : "N/A"}
-                                            </span>
                                           </div>
                                         </div>
                                       </div>
@@ -2319,20 +2301,6 @@
                                         </div>
                                       );
                                     })()}
-
-                                    {/* Summary */}
-                                    {savings && (
-                                      <div className={`rounded-lg p-3 border ${savings.saved > 0 ? "bg-green-900 bg-opacity-20 border-green-700" : "bg-red-900 bg-opacity-20 border-red-700"}`}>
-                                        <div className={`font-semibold mb-2 ${savings.saved > 0 ? "text-green-400" : "text-red-400"}`}>
-                                          {savings.saved > 0 ? "💾 Space Saved" : "⚠️ File Increased"}
-                                        </div>
-                                        <div className="text-sm">
-                                          <span className={savings.saved > 0 ? "text-green-300" : "text-red-300"}>
-                                            {formatSize(Math.abs(savings.saved))} ({Math.abs(savings.percent)}%)
-                                          </span>
-                                        </div>
-                                      </div>
-                                    )}
                                   </div>
                                 </div>
                               )}
@@ -2407,7 +2375,44 @@
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {/* Play buttons for local files */}
+                                {status.localOriginal && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const filename = job.filepath.split("/").pop();
+                                        await window.electronAPI.playOriginalFile(filename);
+                                      } catch (error) {
+                                        console.error("Failed to play original file:", error);
+                                        alert("Failed to open file: " + error.message);
+                                      }
+                                    }}
+                                    className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+                                    title="Play original file in default media player"
+                                  >
+                                    ▶️ Play Original
+                                  </button>
+                                )}
+                                {status.localEncoded && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const filename = job.filepath.split("/").pop();
+                                        await window.electronAPI.playEncodedFile(filename);
+                                      } catch (error) {
+                                        console.error("Failed to play encoded file:", error);
+                                        alert("Failed to open file: " + error.message);
+                                      }
+                                    }}
+                                    className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+                                    title="Play encoded file in default media player"
+                                  >
+                                    ▶️ Play Encoded
+                                  </button>
+                                )}
+                                
+                                {/* Restore buttons */}
                                 {status.localOriginal && (
                                   <button
                                     onClick={() => handleRestore(job.id, "original")}

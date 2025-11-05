@@ -321,6 +321,14 @@ class SftpManager {
       let resumeFrom = 0;
       let writeFlags = "w"; // Default: overwrite
 
+      // Reload config to get latest settings (in case it changed since manager was created)
+      try {
+        const latestConfig = await fs.readJSON("./sharkoder.config.json");
+        this.config = latestConfig;
+      } catch (error) {
+        logger.warn("Failed to reload config, using existing config:", error.message);
+      }
+
       // Check if server backups are enabled (default: true)
       const createBackups = this.config.advanced?.create_backups !== false;
 

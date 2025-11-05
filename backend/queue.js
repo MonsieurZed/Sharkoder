@@ -1045,6 +1045,8 @@ class QueueManager extends EventEmitter {
       currentTime: progress.currentTime,
       totalDuration: progress.totalDuration,
       elapsedTime: progress.elapsedTime,
+      frames: progress.frames,
+      totalFrames: progress.totalFrames,
     };
 
     // Throttle database updates to avoid SQLITE_BUSY errors

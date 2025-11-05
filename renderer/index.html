@@ -1187,15 +1187,33 @@
             await syncCacheWithServer();
           };
 
+          const handleInvalidateCache = (event) => {
+            const { filepath } = event.detail || {};
+            console.log(`🗑️ Invalidating session cache for completed job: ${filepath}`);
+            
+            // Clear session cache completely to force reload
+            setSessionCache({});
+            sessionCacheRef.current = {};
+            
+            // Reload current directory
+            if (currentPath) {
+              console.log(`🔄 Reloading current directory: ${currentPath}`);
+              loadFiles(currentPath, true); // Force refresh
+            }
+          };
+
           if (window.electronAPI.onWebdavTriggerCacheSync) {
             window.electronAPI.onWebdavTriggerCacheSync(handleCacheSyncTrigger);
           }
 
+          // Listen for job completion events to invalidate cache
+          window.addEventListener('invalidateFileTreeCache', handleInvalidateCache);
+
           // Cleanup listener on unmount
           return () => {
-            // Note: electronAPI cleanup would go here if available
+            window.removeEventListener('invalidateFileTreeCache', handleInvalidateCache);
           };
-        }, []); // Empty array = run once on mount
+        }, [currentPath, loadFiles]); // Add dependencies
 
         const connectToServer = async () => {
           try {
@@ -1694,6 +1712,11 @@
                     ) : (
                       <button
                         onClick={async () => {
+                          console.log("🔄 Refresh button clicked - clearing session cache");
+                          // Clear session cache to force complete reload
+                          setSessionCache({});
+                          sessionCacheRef.current = {};
+                          // Reload current directory with force refresh
                           await loadFiles(currentPath, true);
                           await refreshAllFolders();
                         }}
@@ -2093,16 +2116,17 @@
 
                           {/* Stats - Clickable for full details */}
                           <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                            <div
-                              className="relative cursor-pointer hover:bg-gray-700 rounded p-1 -m-1 transition-colors"
-                              onMouseEnter={() => setShowTooltip(job.id)}
-                              onMouseLeave={() => setShowTooltip(null)}
-                            >
-                              <span className="text-gray-400">📹 Codec:</span>
-                              <span className="text-white ml-2 font-medium">
-                                {job.codec_before} → {job.codec_after}
-                              </span>
-                              <span className="text-blue-400 ml-2 text-[10px]">(hover for details)</span>
+                            <div className="relative">
+                              <button
+                                onClick={() => setShowTooltip(showTooltip === job.id ? null : job.id)}
+                                className="cursor-pointer hover:bg-gray-700 rounded p-1 -m-1 transition-colors inline-flex items-center"
+                              >
+                                <span className="text-gray-400">📹 Codec:</span>
+                                <span className="text-white ml-2 font-medium">
+                                  {job.codec_before} → {job.codec_after}
+                                </span>
+                                <span className="text-blue-400 ml-2 text-[10px]">(click for details)</span>
+                              </button>
 
                               {/* Tooltip complet avec toutes les infos */}
                               {showTooltip === job.id && (
@@ -2381,8 +2405,10 @@
                                   <button
                                     onClick={async () => {
                                       try {
-                                        const filename = job.filepath.split("/").pop();
-                                        await window.electronAPI.playOriginalFile(filename);
+                                        const result = await window.electronAPI.playOriginalFile(job.filepath);
+                                        if (!result.success) {
+                                          alert("Failed to open file: " + result.error);
+                                        }
                                       } catch (error) {
                                         console.error("Failed to play original file:", error);
                                         alert("Failed to open file: " + error.message);
@@ -2398,8 +2424,10 @@
                                   <button
                                     onClick={async () => {
                                       try {
-                                        const filename = job.filepath.split("/").pop();
-                                        await window.electronAPI.playEncodedFile(filename);
+                                        const result = await window.electronAPI.playEncodedFile(job.filepath);
+                                        if (!result.success) {
+                                          alert("Failed to open file: " + result.error);
+                                        }
                                       } catch (error) {
                                         console.error("Failed to play encoded file:", error);
                                         alert("Failed to open file: " + error.message);
@@ -3263,7 +3291,7 @@
                           </label>
                           <input
                             type="text"
-                            value={config.ffmpeg?.maxrate || "10M"}
+                            value={config.ffmpeg?.maxrate || "5M"}
                             onChange={(e) => updateConfigNested("ffmpeg", "maxrate", e.target.value)}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                             placeholder="10M"
@@ -3823,7 +3851,7 @@
                           <input type="checkbox" checked={config.advanced?.create_backups !== false} onChange={(e) => updateConfig("advanced.create_backups", e.target.checked)} className="mr-2" />
                           <span className="text-sm text-gray-300">Create backups on server before replacing</span>
                         </label>
-                        <p className="text-xs text-gray-400 ml-6">Original file on server will be renamed with .bak extension</p>
+                        <p className="text-xs text-gray-400 ml-6">Original file on server will be renamed from .ext to .bak.ext</p>
 
                         <label className="flex items-center cursor-pointer">
                           <input
@@ -4333,6 +4361,12 @@
             await loadJobs();
             await loadStats();
             await loadEncodedFiles();
+
+            // Invalidate FileTree cache to force reload of directory
+            console.log("Dispatching invalidateFileTreeCache event");
+            window.dispatchEvent(new CustomEvent('invalidateFileTreeCache', { 
+              detail: { filepath: data.filepath } 
+            }));
 
             // Sync cache after upload completion
             try {

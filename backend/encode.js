@@ -297,6 +297,8 @@ class VideoEncoder extends EventEmitter {
                 speed: parseFloat(progress.currentKbps) || 0,
                 eta: eta,
                 elapsedTime: elapsedSeconds,
+                frames: progress.frames ? parseInt(progress.frames) : null,
+                totalFrames: totalFrames,
               };
 
               this.emit("progress", progressData);

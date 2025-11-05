@@ -160,6 +160,9 @@ class VideoEncoder extends EventEmitter {
       return new Promise((resolve, reject) => {
         const command = ffmpeg(inputPath);
 
+        // Allow overwriting output files without confirmation
+        command.addOption("-y");
+
         // Configure encoding based on GPU availability
         if (this.gpuAvailable) {
           // Load advanced NVENC settings from config (use userConfig first, then fallback to base config)

@@ -2044,20 +2044,13 @@
                       }
                     }}
                     className={`font-semibold py-3 px-6 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-3 text-lg ${
-                      !queueStatus.isRunning 
-                        ? "bg-green-600 hover:bg-green-700 text-white" 
-                        : "bg-red-600 hover:bg-red-700 text-white animate-pulse"
+                      !queueStatus.isRunning ? "bg-green-600 hover:bg-green-700 text-white" : "bg-red-600 hover:bg-red-700 text-white animate-pulse"
                     }`}
                     disabled={queueStatus.loading || (!queueStatus.isRunning && jobs.length === 0)}
                     title={!queueStatus.isRunning ? "Démarrer la queue" : "Arrêter la queue"}
                   >
                     <span className="text-2xl">{!queueStatus.isRunning ? "▶️" : "⏹️"}</span>
-                    <span>
-                      {queueStatus.loading 
-                        ? (queueStatus.isRunning ? "Arrêt..." : "Démarrage...") 
-                        : (queueStatus.isRunning ? "ARRÊTER" : "DÉMARRER")
-                      }
-                    </span>
+                    <span>{queueStatus.loading ? (queueStatus.isRunning ? "Arrêt..." : "Démarrage...") : queueStatus.isRunning ? "ARRÊTER" : "DÉMARRER"}</span>
                   </button>
 
                   {/* Current Job Info */}

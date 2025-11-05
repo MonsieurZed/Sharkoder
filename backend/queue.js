@@ -372,7 +372,7 @@ class QueueManager extends EventEmitter {
 
       // Get all jobs EXCEPT completed ones
       const allJobs = await getAllJobs();
-      const jobsToDelete = allJobs.filter(job => job.status !== 'completed');
+      const jobsToDelete = allJobs.filter((job) => job.status !== "completed");
 
       // Remove each job (except completed)
       for (const job of jobsToDelete) {
@@ -674,6 +674,9 @@ class QueueManager extends EventEmitter {
           encodingTime: (Date.now() - new Date(job.started_at)) / 1000,
         });
 
+        // Save encoding parameters as JSON string for later display
+        const encodingParamsJson = JSON.stringify(result.encodingParams);
+
         // Save encoded file to backups/encoded/ directory with full directory structure
         // Remove leading slash and normalize path
         const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
@@ -717,6 +720,7 @@ class QueueManager extends EventEmitter {
             size_after: encodedInfo.size,
             bitrate_after: encodedInfo.bitrate,
             duration_after: encodedInfo.duration,
+            encoding_params: encodingParamsJson,
           });
 
           this.encodingJob = null;
@@ -730,6 +734,7 @@ class QueueManager extends EventEmitter {
             size_after: encodedInfo.size,
             bitrate_after: encodedInfo.bitrate,
             duration_after: encodedInfo.duration,
+            encoding_params: encodingParamsJson,
           });
 
           this.encodingJob = null;

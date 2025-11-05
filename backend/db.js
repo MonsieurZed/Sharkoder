@@ -130,6 +130,11 @@ const initDatabase = async () => {
     } catch (e) {
       /* Column already exists */
     }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN encoding_params TEXT");
+    } catch (e) {
+      /* Column already exists */
+    }
 
     saveDatabase();
     logger.info("Jobs table ready");

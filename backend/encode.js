@@ -138,6 +138,18 @@ class VideoEncoder extends EventEmitter {
       const profile = ffmpegConfig.profile || this.config.profile || "main10";
       const forceGPU = ffmpegConfig.force_gpu || false;
 
+      // Load advanced NVENC settings (we'll need them later)
+      const rcMode = ffmpegConfig.rc_mode || this.config.ffmpeg?.rc_mode || "vbr_hq";
+      const bitrate = ffmpegConfig.bitrate || this.config.ffmpeg?.bitrate || "3M";
+      const maxrate = ffmpegConfig.maxrate || this.config.ffmpeg?.maxrate || "6M";
+      const lookahead = ffmpegConfig.lookahead !== undefined ? ffmpegConfig.lookahead : this.config.ffmpeg?.lookahead || 32;
+      const bframes = ffmpegConfig.bframes !== undefined ? ffmpegConfig.bframes : this.config.ffmpeg?.bframes || 3;
+      const bRefMode = ffmpegConfig.b_ref_mode || this.config.ffmpeg?.b_ref_mode || "middle";
+      const spatialAQ = ffmpegConfig.spatial_aq !== false && this.config.ffmpeg?.spatial_aq !== false;
+      const temporalAQ = ffmpegConfig.temporal_aq !== false && this.config.ffmpeg?.temporal_aq !== false;
+      const aqStrength = ffmpegConfig.aq_strength || this.config.ffmpeg?.aq_strength || 8;
+      const multipass = ffmpegConfig.multipass || this.config.ffmpeg?.multipass || "fullres";
+
       logger.info(`[CONFIG] Profile from userConfig: ${ffmpegConfig.profile}, from baseConfig: ${this.config.profile}, final: ${profile}`);
 
       // Test GPU availability if not tested yet
@@ -281,12 +293,40 @@ class VideoEncoder extends EventEmitter {
             try {
               // Verify output file exists and get final info
               const outputInfo = await this.getVideoInfo(outputPath);
+
+              // Create encoding params object to save
+              const encodingParams = {
+                gpu_used: this.gpuAvailable,
+                encoder: this.gpuAvailable ? "hevc_nvenc" : "libx265",
+                preset: this.gpuAvailable ? encodePreset : cpuPreset,
+                quality: this.gpuAvailable ? cq : crf,
+                quality_type: this.gpuAvailable ? "CQ" : "CRF",
+                profile: profile,
+                audio_codec: audioCodec,
+                audio_bitrate: audioCodec === "copy" ? null : audioBitrate,
+                two_pass: twoPass,
+                // NVENC specific params (only if GPU was used)
+                ...(this.gpuAvailable && {
+                  rc_mode: rcMode,
+                  bitrate: bitrate,
+                  maxrate: maxrate,
+                  lookahead: lookahead,
+                  bframes: bframes,
+                  b_ref_mode: bRefMode,
+                  spatial_aq: spatialAQ,
+                  temporal_aq: temporalAQ,
+                  aq_strength: aqStrength,
+                  multipass: multipass,
+                }),
+              };
+
               resolve({
                 inputPath,
                 outputPath,
                 elapsedTime,
                 inputInfo: videoInfo,
                 outputInfo: outputInfo,
+                encodingParams: encodingParams,
               });
             } catch (verifyError) {
               logger.error("Failed to verify encoded file:", verifyError);

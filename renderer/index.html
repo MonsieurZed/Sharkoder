@@ -1277,7 +1277,7 @@
         const deleteFileOrFolder = async (file) => {
           try {
             const isDirectory = file.type === "directory";
-            
+
             // Check if folder is empty (if it's a directory)
             if (isDirectory) {
               // If we have stats and videoCount > 0, it's not empty
@@ -1288,11 +1288,11 @@
             }
 
             const result = await window.electronAPI.webdavDelete(file.path, isDirectory);
-            
+
             if (result.success) {
               // Remove from current file list
               setFiles((prevFiles) => prevFiles.filter((f) => f.path !== file.path));
-              
+
               // Remove from session cache
               const pathFiles = sessionCacheRef.current[currentPath];
               if (pathFiles) {
@@ -1303,8 +1303,8 @@
                   [currentPath]: updatedFiles,
                 }));
               }
-              
-              alert(`✅ ${isDirectory ? 'Folder' : 'File'} "${file.name}" deleted successfully!`);
+
+              alert(`✅ ${isDirectory ? "Folder" : "File"} "${file.name}" deleted successfully!`);
             } else {
               alert(`❌ Failed to delete: ${result.error}`);
             }
@@ -1321,16 +1321,18 @@
           try {
             const isDirectory = file.type === "directory";
             const fileKey = file.path;
-            
+
             setDownloading((prev) => ({ ...prev, [fileKey]: true }));
-            
-            console.log(`📥 Starting download: ${file.name} (${isDirectory ? 'folder' : 'file'})`);
-            
+
+            console.log(`📥 Starting download: ${file.name} (${isDirectory ? "folder" : "file"})`);
+
             const result = await window.electronAPI.webdavDownloadToDefault(file.path, isDirectory);
-            
+
             if (result.success) {
               if (isDirectory) {
-                alert(`✅ Folder downloaded successfully!\n\n${result.filesDownloaded} files (${result.totalSize} bytes)\n${result.errors.length > 0 ? `\n⚠️ ${result.errors.length} errors occurred` : ''}`);
+                alert(
+                  `✅ Folder downloaded successfully!\n\n${result.filesDownloaded} files (${result.totalSize} bytes)\n${result.errors.length > 0 ? `\n⚠️ ${result.errors.length} errors occurred` : ""}`
+                );
               } else {
                 alert(`✅ File downloaded successfully!\n\n${result.message}`);
               }
@@ -1387,7 +1389,7 @@
 
             // Lister le contenu du dossier cliqué pour détecter si c'est une série
             const folderContents = await window.electronAPI.webdavListDirectory(folderPath, false);
-            
+
             if (!folderContents.success) {
               alert(`Error loading folder: ${folderContents.error}`);
               return;
@@ -1485,13 +1487,13 @@
             for (const folder of folders) {
               await calculateFolderSize(folder.path, true, true);
               processed++;
-              
+
               // Calculer et afficher l'ETA
               const elapsed = Date.now() - startTime;
               const avgTimePerFolder = elapsed / processed;
               const remaining = folders.length - processed;
               const eta = Math.round((avgTimePerFolder * remaining) / 1000);
-              
+
               console.log(`📊 Progress: ${processed}/${folders.length} folders | ETA: ${eta}s`);
             }
 
@@ -1690,12 +1692,12 @@
                         Refreshing...
                       </span>
                     ) : (
-                      <button 
+                      <button
                         onClick={async () => {
                           await loadFiles(currentPath, true);
                           await refreshAllFolders();
-                        }} 
-                        className="btn-secondary text-xs" 
+                        }}
+                        className="btn-secondary text-xs"
                         title="Refresh directory and all folder stats"
                       >
                         🔄 Refresh
@@ -1795,8 +1797,8 @@
                                   </button>
                                 )}
                                 {/* Download folder button - only show if not in root directory */}
-                                {currentPath !== "/" && (
-                                  downloading[file.path] ? (
+                                {currentPath !== "/" &&
+                                  (downloading[file.path] ? (
                                     <span className="text-xs text-blue-400 flex items-center px-2">
                                       <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-400 mr-1"></div>
                                       Downloading...
@@ -1809,12 +1811,11 @@
                                     >
                                       📥
                                     </button>
-                                  )
-                                )}
+                                  ))}
                                 {/* Show delete button only for empty folders (videoCount === 0 and cached) */}
                                 {file.cached && file.videoCount === 0 && file.fileCount === 0 && (
                                   <button
-                                    onClick={() => setDeleteConfirm({ file, type: 'folder' })}
+                                    onClick={() => setDeleteConfirm({ file, type: "folder" })}
                                     className="bg-red-600 hover:bg-red-500 text-white px-2 py-1 rounded text-xs"
                                     title="Delete this empty folder"
                                   >
@@ -1838,19 +1839,11 @@
                                     Downloading...
                                   </span>
                                 ) : (
-                                  <button
-                                    onClick={() => downloadToDefault(file)}
-                                    className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded"
-                                    title="Download file to default directory"
-                                  >
+                                  <button onClick={() => downloadToDefault(file)} className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-2 rounded" title="Download file to default directory">
                                     📥
                                   </button>
                                 )}
-                                <button
-                                  onClick={() => setDeleteConfirm({ file, type: 'file' })}
-                                  className="bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded"
-                                  title="Delete this video file"
-                                >
+                                <button onClick={() => setDeleteConfirm({ file, type: "file" })} className="bg-red-600 hover:bg-red-500 text-white px-3 py-2 rounded" title="Delete this video file">
                                   🗑️
                                 </button>
                               </>
@@ -1870,16 +1863,11 @@
                 <div className="bg-gray-800 rounded-lg p-6 max-w-md w-full mx-4 border-2 border-red-500" onClick={(e) => e.stopPropagation()}>
                   <h3 className="text-xl font-bold mb-4 text-red-400">⚠️ Confirm Deletion</h3>
                   <div className="mb-4">
+                    <p className="text-sm text-gray-300 mb-2">Are you sure you want to delete this {deleteConfirm.type}?</p>
                     <p className="text-sm text-gray-300 mb-2">
-                      Are you sure you want to delete this {deleteConfirm.type}?
+                      <span className="text-lg">{deleteConfirm.type === "directory" ? "📁" : "🎬"}</span> <span className="font-mono text-blue-400">{deleteConfirm.file.name}</span>
                     </p>
-                    <p className="text-sm text-gray-300 mb-2">
-                      <span className="text-lg">{deleteConfirm.type === "directory" ? "📁" : "🎬"}</span>{" "}
-                      <span className="font-mono text-blue-400">{deleteConfirm.file.name}</span>
-                    </p>
-                    {deleteConfirm.file.size && (
-                      <p className="text-sm text-gray-400">Size: {formatSize(deleteConfirm.file.size)}</p>
-                    )}
+                    {deleteConfirm.file.size && <p className="text-sm text-gray-400">Size: {formatSize(deleteConfirm.file.size)}</p>}
                     <div className="mt-4 p-3 bg-red-900/20 border border-red-700 rounded">
                       <p className="text-sm text-red-300">
                         <strong>⚠️ Warning:</strong> This action cannot be undone!
@@ -1931,18 +1919,22 @@
       };
 
       // Completed Jobs Component
-      const CompletedJobs = ({ jobs, loadJobs }) => {
+      const CompletedJobs = ({ jobs, loadJobs, userConfig }) => {
+        console.log("[CompletedJobs] Component rendering with", jobs?.length, "jobs");
+
         const [completedJobs, setCompletedJobs] = useState([]);
         const [backupStatus, setBackupStatus] = useState({});
         const [loading, setLoading] = useState(false);
         const [restoreProgress, setRestoreProgress] = useState({});
+        const [showTooltip, setShowTooltip] = useState(null); // Pour afficher le tooltip d'encodage
 
         useEffect(() => {
+          console.log("[CompletedJobs] Setting up restore progress listener");
           // Listen for restore progress updates
           window.electronAPI.onRestoreProgress((progress) => {
             setRestoreProgress((prev) => ({
               ...prev,
-              [progress.jobId]: progress
+              [progress.jobId]: progress,
             }));
           });
 
@@ -1952,6 +1944,13 @@
         }, []);
 
         useEffect(() => {
+          console.log("[CompletedJobs] Jobs changed, filtering completed jobs from", jobs?.length, "total jobs");
+          if (!jobs || !Array.isArray(jobs)) {
+            console.error("[CompletedJobs] Invalid jobs array:", jobs);
+            setCompletedJobs([]);
+            return;
+          }
+
           // Filter completed jobs
           const completed = jobs.filter((job) => job.status === "completed");
           console.log(`[CompletedJobs] Found ${completed.length} completed jobs out of ${jobs.length} total jobs`);
@@ -1971,16 +1970,16 @@
 
         const handleRestore = async (jobId, source) => {
           // Find the job to get filename
-          const job = completedJobs.find(j => j.id === jobId);
-          const filename = job ? job.filename || 'Unknown file' : 'Unknown file';
-          
+          const job = completedJobs.find((j) => j.id === jobId);
+          const filename = job ? job.filename || "Unknown file" : "Unknown file";
+
           if (!window.confirm(`Restore this file from ${source}?\n\n${filename}`)) return;
 
           setLoading(true);
           // Reset progress for this job
           setRestoreProgress((prev) => ({
             ...prev,
-            [jobId]: { started: true, percent: 0 }
+            [jobId]: { started: true, percent: 0 },
           }));
 
           try {
@@ -2068,160 +2067,390 @@
               ) : (
                 <div className="space-y-3">
                   {completedJobs.map((job) => {
-                    const savings = calculateSavings(job.size, job.size_after);
-                    const status = backupStatus[job.id] || {};
+                    try {
+                      const savings = calculateSavings(job.size, job.size_after);
+                      const status = backupStatus[job.id] || {};
 
-                    return (
-                      <div key={job.id} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-                        {/* File Info */}
-                        <div className="flex items-start justify-between mb-3 gap-2">
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-white truncate" title={job.filepath}>
-                              {job.filepath.split("/").pop()}
-                            </div>
-                            <div className="text-xs text-gray-400 truncate">{job.filepath}</div>
-                          </div>
-                          <button
-                            onClick={() => handleDelete(job.id)}
-                            disabled={loading}
-                            className="flex-shrink-0 px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded disabled:opacity-50"
-                            title="Permanently delete from history"
-                          >
-                            🗑️
-                          </button>
-                        </div>
-
-                        {/* Stats */}
-                        <div className="grid grid-cols-2 gap-2 text-xs mb-3">
-                          <div
-                            title={userConfig?.ffmpeg ? 
-                              `Encoding Settings:\n` +
-                              `Encoder: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? 'NVENC (GPU)' : 'x265 (CPU)'}\n` +
-                              `Preset: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? userConfig.ffmpeg.encode_preset || 'p7' : userConfig.ffmpeg.cpu_preset || 'medium'}\n` +
-                              `Quality: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? 'CQ ' + (userConfig.ffmpeg.cq || 18) : 'CRF ' + (userConfig.ffmpeg.cpu_crf || 23)}\n` +
-                              `Bitrate: ${userConfig.ffmpeg.bitrate || '5M'} / ${userConfig.ffmpeg.maxrate || '10M'}`
-                              : 'Encoding settings not available'
-                            }
-                            className="cursor-help"
-                          >
-                            <span className="text-gray-400">Codec:</span>
-                            <span className="text-white ml-2">
-                              {job.codec_before} → {job.codec_after}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Size:</span>
-                            <span className="text-white ml-2">
-                              {formatSize(job.size)} → {formatSize(job.size_after)}
-                            </span>
-                            {savings && savings.saved > 0 && <span className="text-green-400 ml-2">(-{savings.percent}%)</span>}
-                            {savings && savings.saved < 0 && <span className="text-red-400 ml-2">(+{Math.abs(savings.percent)}% ⚠️)</span>}
-                          </div>
-                          <div>
-                            <span className="text-gray-400">Completed:</span>
-                            <span className="text-white ml-2">{formatDate(job.finished_at)}</span>
-                          </div>
-                        </div>
-
-                        {/* Backup Status & Restore Buttons */}
-                        <div className="border-t border-gray-700 pt-3">
-                          {/* Show restore progress if active */}
-                          {restoreProgress[job.id] && restoreProgress[job.id].started && (
-                            <div className="mb-3 p-2 bg-blue-900 bg-opacity-30 rounded">
-                              <div className="flex items-center justify-between mb-1">
-                                <span className="text-xs text-blue-300 font-semibold">
-                                  {restoreProgress[job.id].step || "Restoring..."}
-                                  {restoreProgress[job.id].type === 'move' ? ' ⚡' : ` (${restoreProgress[job.id].type})`}
-                                </span>
-                                {restoreProgress[job.id].filename && (
-                                  <span className="text-xs text-gray-400">{restoreProgress[job.id].filename}</span>
-                                )}
+                      return (
+                        <div key={job.id} className="bg-gray-800 rounded-lg p-4 border border-gray-700">
+                          {/* File Info */}
+                          <div className="flex items-start justify-between mb-3 gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-white truncate" title={job.filepath}>
+                                {job.filepath.split("/").pop()}
                               </div>
-                              {restoreProgress[job.id].percent !== undefined && (
-                                <div className="mb-1">
-                                  <div className="w-full bg-gray-700 rounded-full h-2">
-                                    <div 
-                                      className="bg-blue-500 h-2 rounded-full transition-all"
-                                      style={{ width: `${restoreProgress[job.id].percent}%` }}
-                                    />
+                              <div className="text-xs text-gray-400 truncate">{job.filepath}</div>
+                            </div>
+                            <button
+                              onClick={() => handleDelete(job.id)}
+                              disabled={loading}
+                              className="flex-shrink-0 px-2 py-1 bg-red-600 hover:bg-red-700 text-white text-xs rounded disabled:opacity-50"
+                              title="Permanently delete from history"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+
+                          {/* Stats - Clickable for full details */}
+                          <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                            <div
+                              className="relative cursor-pointer hover:bg-gray-700 rounded p-1 -m-1 transition-colors"
+                              onMouseEnter={() => setShowTooltip(job.id)}
+                              onMouseLeave={() => setShowTooltip(null)}
+                            >
+                              <span className="text-gray-400">📹 Codec:</span>
+                              <span className="text-white ml-2 font-medium">
+                                {job.codec_before} → {job.codec_after}
+                              </span>
+                              <span className="text-blue-400 ml-2 text-[10px]">(hover for details)</span>
+
+                              {/* Tooltip complet avec toutes les infos */}
+                              {showTooltip === job.id && (
+                                <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[9999] bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl max-w-4xl max-h-[90vh] overflow-auto">
+                                  <div className="sticky top-0 bg-gray-800 border-b border-blue-500 px-4 py-3 flex items-center justify-between">
+                                    <h3 className="text-lg font-bold text-blue-400">📊 Complete Encoding Information</h3>
+                                    <button onClick={() => setShowTooltip(null)} className="text-gray-400 hover:text-white text-xl leading-none">
+                                      ✕
+                                    </button>
+                                  </div>
+
+                                  <div className="p-4 space-y-4">
+                                    {/* File Path */}
+                                    <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
+                                      <div className="text-yellow-400 font-semibold mb-2">📁 File</div>
+                                      <div className="text-xs text-gray-300 break-all">{job.filepath}</div>
+                                      <div className="text-xs text-gray-400 mt-1">Completed: {formatDate(job.finished_at)}</div>
+                                    </div>
+
+                                    {/* Before & After Comparison */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                      {/* BEFORE */}
+                                      <div className="bg-red-900 bg-opacity-20 border border-red-700 rounded-lg p-3">
+                                        <div className="text-red-400 font-semibold mb-3 flex items-center gap-2">
+                                          <span className="text-xl">📥</span>
+                                          <span>Original File</span>
+                                        </div>
+                                        <div className="space-y-2 text-xs">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Codec:</span>
+                                            <span className="text-white font-mono">{job.codec_before || "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Size:</span>
+                                            <span className="text-white font-mono font-bold">{formatSize(job.size)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Resolution:</span>
+                                            <span className="text-white font-mono">{job.resolution_before || "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Bitrate:</span>
+                                            <span className="text-white font-mono">{job.bitrate_before || "N/A"}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+
+                                      {/* AFTER */}
+                                      <div className="bg-green-900 bg-opacity-20 border border-green-700 rounded-lg p-3">
+                                        <div className="text-green-400 font-semibold mb-3 flex items-center gap-2">
+                                          <span className="text-xl">📤</span>
+                                          <span>Encoded File</span>
+                                        </div>
+                                        <div className="space-y-2 text-xs">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Codec:</span>
+                                            <span className="text-white font-mono">{job.codec_after || "HEVC"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Size:</span>
+                                            <span className="text-white font-mono font-bold">{formatSize(job.size_after)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Resolution:</span>
+                                            <span className="text-white font-mono">{job.resolution_after || job.resolution_before || "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Savings:</span>
+                                            <span className={`font-mono font-bold ${savings && savings.saved > 0 ? "text-green-400" : "text-red-400"}`}>
+                                              {savings ? (savings.saved > 0 ? `-${savings.percent}%` : `+${Math.abs(savings.percent)}%`) : "N/A"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    {/* Encoding Settings Used */}
+                                    {(() => {
+                                      // Parse encoding params from job (saved during encoding)
+                                      let params = null;
+                                      try {
+                                        params = job.encoding_params ? JSON.parse(job.encoding_params) : null;
+                                      } catch (e) {
+                                        console.error("Failed to parse encoding_params:", e);
+                                      }
+
+                                      // If no saved params, fall back to current config (for old jobs)
+                                      const useCurrentConfig = !params && userConfig?.ffmpeg;
+
+                                      if (!params && !useCurrentConfig) {
+                                        return (
+                                          <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
+                                            <div className="text-gray-400 text-sm">⚠️ Encoding parameters not available for this job</div>
+                                          </div>
+                                        );
+                                      }
+
+                                      return (
+                                        <div className="bg-blue-900 bg-opacity-20 border border-blue-700 rounded-lg p-3">
+                                          <div className="text-blue-400 font-semibold mb-3 flex items-center gap-2">
+                                            <span className="text-xl">⚙️</span>
+                                            <span>Encoding Parameters {params ? "Used" : "(Current Config - Not Saved)"}</span>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Encoder:</span>
+                                              <span className="text-white font-medium">
+                                                {params
+                                                  ? params.gpu_used
+                                                    ? "🎮 NVENC (GPU)"
+                                                    : "💻 x265 (CPU)"
+                                                  : userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled
+                                                  ? "🎮 NVENC (GPU)"
+                                                  : "💻 x265 (CPU)"}
+                                              </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Preset:</span>
+                                              <span className="text-white font-mono">
+                                                {params
+                                                  ? params.preset
+                                                  : userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled
+                                                  ? userConfig.ffmpeg.encode_preset || "p7"
+                                                  : userConfig.ffmpeg.cpu_preset || "medium"}
+                                              </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Quality:</span>
+                                              <span className="text-white font-mono">
+                                                {params
+                                                  ? `${params.quality_type} ${params.quality}`
+                                                  : userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled
+                                                  ? "CQ " + (userConfig.ffmpeg.cq || 18)
+                                                  : "CRF " + (userConfig.ffmpeg.crf || 23)}
+                                              </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Profile:</span>
+                                              <span className="text-white font-mono">{params ? params.profile : userConfig.ffmpeg.profile || "main10"}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Audio Codec:</span>
+                                              <span className="text-white font-mono">{params ? params.audio_codec : userConfig.ffmpeg.audio_codec || "copy"}</span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Audio Bitrate:</span>
+                                              <span className="text-white font-mono">
+                                                {params
+                                                  ? params.audio_bitrate
+                                                    ? params.audio_bitrate + "k"
+                                                    : "original"
+                                                  : userConfig.ffmpeg.audio_codec !== "copy"
+                                                  ? (userConfig.ffmpeg.audio_bitrate || 128) + "k"
+                                                  : "original"}
+                                              </span>
+                                            </div>
+                                            <div className="flex justify-between">
+                                              <span className="text-gray-400">Two-Pass:</span>
+                                              <span className={`font-medium ${(params ? params.two_pass : userConfig.ffmpeg.two_pass) ? "text-green-400" : "text-gray-400"}`}>
+                                                {(params ? params.two_pass : userConfig.ffmpeg.two_pass) ? "✅ Yes" : "❌ No"}
+                                              </span>
+                                            </div>
+
+                                            {/* NVENC specific params (only if GPU was used) */}
+                                            {(params ? params.gpu_used : userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled) && (
+                                              <>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Avg Bitrate:</span>
+                                                  <span className="text-white font-mono">{params ? params.bitrate : userConfig.ffmpeg.bitrate || "3M"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Max Bitrate:</span>
+                                                  <span className="text-white font-mono">{params ? params.maxrate : userConfig.ffmpeg.maxrate || "5M"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">RC Mode:</span>
+                                                  <span className="text-white font-mono">{params ? params.rc_mode : userConfig.ffmpeg.rc_mode || "vbr_hq"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">B-Frames:</span>
+                                                  <span className="text-white font-mono">{params ? params.bframes : userConfig.ffmpeg.bframes ?? 4}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Lookahead:</span>
+                                                  <span className="text-white font-mono">{params ? params.lookahead : userConfig.ffmpeg.lookahead ?? 32}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Multipass:</span>
+                                                  <span className="text-white font-mono">{params ? params.multipass : userConfig.ffmpeg.multipass || "fullres"}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Spatial AQ:</span>
+                                                  <span className={`font-medium ${(params ? params.spatial_aq : userConfig.ffmpeg.spatial_aq !== false) ? "text-green-400" : "text-gray-400"}`}>
+                                                    {(params ? params.spatial_aq : userConfig.ffmpeg.spatial_aq !== false) ? "✅" : "❌"}
+                                                  </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Temporal AQ:</span>
+                                                  <span className={`font-medium ${(params ? params.temporal_aq : userConfig.ffmpeg.temporal_aq !== false) ? "text-green-400" : "text-gray-400"}`}>
+                                                    {(params ? params.temporal_aq : userConfig.ffmpeg.temporal_aq !== false) ? "✅" : "❌"}
+                                                  </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">AQ Strength:</span>
+                                                  <span className="text-white font-mono">{params ? params.aq_strength : userConfig.ffmpeg.aq_strength || 8}</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">B-Ref Mode:</span>
+                                                  <span className="text-white font-mono">{params ? params.b_ref_mode : userConfig.ffmpeg.b_ref_mode || "middle"}</span>
+                                                </div>
+                                              </>
+                                            )}
+                                          </div>
+                                        </div>
+                                      );
+                                    })()}
+
+                                    {/* Summary */}
+                                    {savings && (
+                                      <div className={`rounded-lg p-3 border ${savings.saved > 0 ? "bg-green-900 bg-opacity-20 border-green-700" : "bg-red-900 bg-opacity-20 border-red-700"}`}>
+                                        <div className={`font-semibold mb-2 ${savings.saved > 0 ? "text-green-400" : "text-red-400"}`}>
+                                          {savings.saved > 0 ? "💾 Space Saved" : "⚠️ File Increased"}
+                                        </div>
+                                        <div className="text-sm">
+                                          <span className={savings.saved > 0 ? "text-green-300" : "text-red-300"}>
+                                            {formatSize(Math.abs(savings.saved))} ({Math.abs(savings.percent)}%)
+                                          </span>
+                                        </div>
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                               )}
-                              {/* Only show transfer details for download/upload, not for instant move */}
-                              {restoreProgress[job.id].type !== 'move' && (
-                                <div className="flex items-center justify-between text-xs">
-                                  <span className="text-gray-400">
-                                    {restoreProgress[job.id].transferred && restoreProgress[job.id].total && (
-                                      <>{formatSize(restoreProgress[job.id].transferred)} / {formatSize(restoreProgress[job.id].total)}</>
-                                    )}
-                                  </span>
-                                  <span className="text-gray-400">
-                                    {restoreProgress[job.id].speed && <>Speed: {formatSize(restoreProgress[job.id].speed)}/s</>}
-                                    {restoreProgress[job.id].eta && <> • ETA: {restoreProgress[job.id].eta}</>}
-                                  </span>
-                                </div>
-                              )}
-                              {/* Show instant move indicator */}
-                              {restoreProgress[job.id].type === 'move' && (
-                                <div className="text-xs text-green-400 mt-1">
-                                  ⚡ Instant server-side move (no data transfer)
-                                </div>
-                              )}
                             </div>
-                          )}
-                          
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3 text-xs">
-                              <div className={`flex items-center gap-1 ${status.localOriginal ? "text-green-400" : "text-gray-500"}`}>
-                                <span>{status.localOriginal ? "✓" : "✗"}</span>
-                                <span>Local Original</span>
-                              </div>
-                              <div className={`flex items-center gap-1 ${status.localEncoded ? "text-green-400" : "text-gray-500"}`}>
-                                <span>{status.localEncoded ? "✓" : "✗"}</span>
-                                <span>Local Encoded</span>
-                              </div>
-                              <div className={`flex items-center gap-1 ${status.serverBackup ? "text-green-400" : "text-gray-500"}`}>
-                                <span>{status.serverBackup ? "✓" : "✗"}</span>
-                                <span>Server Backup</span>
-                              </div>
+                            <div>
+                              <span className="text-gray-400">Size:</span>
+                              <span className="text-white ml-2">
+                                {formatSize(job.size)} → {formatSize(job.size_after)}
+                              </span>
+                              {savings && savings.saved > 0 && <span className="text-green-400 ml-2">(-{savings.percent}%)</span>}
+                              {savings && savings.saved < 0 && <span className="text-red-400 ml-2">(+{Math.abs(savings.percent)}% ⚠️)</span>}
                             </div>
+                            <div>
+                              <span className="text-gray-400">Completed:</span>
+                              <span className="text-white ml-2">{formatDate(job.finished_at)}</span>
+                            </div>
+                          </div>
 
-                            <div className="flex items-center gap-2">
-                              {status.localOriginal && (
-                                <button
-                                  onClick={() => handleRestore(job.id, "original")}
-                                  disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
-                                  className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded disabled:opacity-50"
-                                  title="Restore original file from local backup"
-                                >
-                                  ⬆️ Restore Original
-                                </button>
-                              )}
-                              {status.localEncoded && (
-                                <button
-                                  onClick={() => handleRestore(job.id, "encoded")}
-                                  disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
-                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50"
-                                  title="Re-upload encoded file from local backup"
-                                >
-                                  ⬆️ Re-upload Encoded
-                                </button>
-                              )}
-                              {status.serverBackup && (
-                                <button
-                                  onClick={() => handleRestore(job.id, "server")}
-                                  disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
-                                  className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50"
-                                  title="Restore from server backup (.bak.<ext>)"
-                                >
-                                  ↩️ Restore Server Backup
-                                </button>
-                              )}
+                          {/* Backup Status & Restore Buttons */}
+                          <div className="border-t border-gray-700 pt-3">
+                            {/* Show restore progress if active */}
+                            {restoreProgress[job.id] && restoreProgress[job.id].started && (
+                              <div className="mb-3 p-2 bg-blue-900 bg-opacity-30 rounded">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs text-blue-300 font-semibold">
+                                    {restoreProgress[job.id].step || "Restoring..."}
+                                    {restoreProgress[job.id].type === "move" ? " ⚡" : ` (${restoreProgress[job.id].type})`}
+                                  </span>
+                                  {restoreProgress[job.id].filename && <span className="text-xs text-gray-400">{restoreProgress[job.id].filename}</span>}
+                                </div>
+                                {restoreProgress[job.id].percent !== undefined && (
+                                  <div className="mb-1">
+                                    <div className="w-full bg-gray-700 rounded-full h-2">
+                                      <div className="bg-blue-500 h-2 rounded-full transition-all" style={{ width: `${restoreProgress[job.id].percent}%` }} />
+                                    </div>
+                                  </div>
+                                )}
+                                {/* Only show transfer details for download/upload, not for instant move */}
+                                {restoreProgress[job.id].type !== "move" && (
+                                  <div className="flex items-center justify-between text-xs">
+                                    <span className="text-gray-400">
+                                      {restoreProgress[job.id].transferred && restoreProgress[job.id].total && (
+                                        <>
+                                          {formatSize(restoreProgress[job.id].transferred)} / {formatSize(restoreProgress[job.id].total)}
+                                        </>
+                                      )}
+                                    </span>
+                                    <span className="text-gray-400">
+                                      {restoreProgress[job.id].speed && <>Speed: {formatSize(restoreProgress[job.id].speed)}/s</>}
+                                      {restoreProgress[job.id].eta && <> • ETA: {restoreProgress[job.id].eta}</>}
+                                    </span>
+                                  </div>
+                                )}
+                                {/* Show instant move indicator */}
+                                {restoreProgress[job.id].type === "move" && <div className="text-xs text-green-400 mt-1">⚡ Instant server-side move (no data transfer)</div>}
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3 text-xs">
+                                <div className={`flex items-center gap-1 ${status.localOriginal ? "text-green-400" : "text-gray-500"}`}>
+                                  <span>{status.localOriginal ? "✓" : "✗"}</span>
+                                  <span>Local Original</span>
+                                </div>
+                                <div className={`flex items-center gap-1 ${status.localEncoded ? "text-green-400" : "text-gray-500"}`}>
+                                  <span>{status.localEncoded ? "✓" : "✗"}</span>
+                                  <span>Local Encoded</span>
+                                </div>
+                                <div className={`flex items-center gap-1 ${status.serverBackup ? "text-green-400" : "text-gray-500"}`}>
+                                  <span>{status.serverBackup ? "✓" : "✗"}</span>
+                                  <span>Server Backup</span>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                {status.localOriginal && (
+                                  <button
+                                    onClick={() => handleRestore(job.id, "original")}
+                                    disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
+                                    className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded disabled:opacity-50"
+                                    title="Restore original file from local backup"
+                                  >
+                                    ⬆️ Restore Original
+                                  </button>
+                                )}
+                                {status.localEncoded && (
+                                  <button
+                                    onClick={() => handleRestore(job.id, "encoded")}
+                                    disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
+                                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50"
+                                    title="Re-upload encoded file from local backup"
+                                  >
+                                    ⬆️ Re-upload Encoded
+                                  </button>
+                                )}
+                                {status.serverBackup && (
+                                  <button
+                                    onClick={() => handleRestore(job.id, "server")}
+                                    disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
+                                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50"
+                                    title="Restore from server backup (.bak.<ext>)"
+                                  >
+                                    ↩️ Restore Server Backup
+                                  </button>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    );
+                      );
+                    } catch (error) {
+                      console.error("[CompletedJobs] Error rendering job:", job?.id, error);
+                      return (
+                        <div key={job?.id || Math.random()} className="bg-red-900 rounded-lg p-4 border border-red-700">
+                          <div className="text-red-300">Error rendering job: {error.message}</div>
+                        </div>
+                      );
+                    }
                   })}
                 </div>
               )}
@@ -2326,13 +2555,13 @@
                     <button
                       onClick={async () => {
                         // Count only non-completed jobs
-                        const queueJobsCount = jobs.filter(job => job.status !== 'completed').length;
-                        
+                        const queueJobsCount = jobs.filter((job) => job.status !== "completed").length;
+
                         if (queueJobsCount === 0) {
                           alert("⚠️ La queue ne contient que des jobs complétés. Utilisez l'onglet 'Completed' pour gérer l'historique.");
                           return;
                         }
-                        
+
                         if (window.confirm(`Êtes-vous sûr de vouloir vider la queue ?\n\n${queueJobsCount} jobs seront supprimés.\n\nNote: Les jobs complétés seront conservés dans l'historique.`)) {
                           try {
                             setQueueStatus((prev) => ({ ...prev, loading: true }));
@@ -2416,17 +2645,17 @@
                               <div className="font-medium text-white mb-1 flex items-center gap-2">
                                 <span>{job.filepath.split("/").pop()}</span>
                                 {userConfig?.ffmpeg && (
-                                  <span 
+                                  <span
                                     className="text-xs bg-blue-900/40 px-2 py-0.5 rounded cursor-help"
                                     title={
                                       `Encoding Settings:\n` +
-                                      `Encoder: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? 'NVENC (GPU)' : 'x265 (CPU)'}\n` +
-                                      `Preset: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? userConfig.ffmpeg.encode_preset || 'p7' : userConfig.ffmpeg.cpu_preset || 'medium'}\n` +
-                                      `Quality: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? 'CQ ' + (userConfig.ffmpeg.cq || 18) : 'CRF ' + (userConfig.ffmpeg.cpu_crf || 23)}\n` +
-                                      `Bitrate: ${userConfig.ffmpeg.bitrate || '5M'} / ${userConfig.ffmpeg.maxrate || '10M'}`
+                                      `Encoder: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? "NVENC (GPU)" : "x265 (CPU)"}\n` +
+                                      `Preset: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? userConfig.ffmpeg.encode_preset || "p7" : userConfig.ffmpeg.cpu_preset || "medium"}\n` +
+                                      `Quality: ${userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? "CQ " + (userConfig.ffmpeg.cq || 18) : "CRF " + (userConfig.ffmpeg.cpu_crf || 23)}\n` +
+                                      `Bitrate: ${userConfig.ffmpeg.bitrate || "5M"} / ${userConfig.ffmpeg.maxrate || "10M"}`
                                     }
                                   >
-                                    ⚙️ {userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? 'NVENC' : 'x265'}
+                                    ⚙️ {userConfig.ffmpeg.force_gpu || userConfig.ffmpeg.gpu_enabled ? "NVENC" : "x265"}
                                   </span>
                                 )}
                               </div>
@@ -2773,11 +3002,11 @@
               cpu_preset: config.cpu_preset,
               cpu_crf: config.cpu_crf,
               saved_at: new Date().toISOString(),
-              version: "1.0"
+              version: "1.0",
             };
 
             const result = await window.electronAPI.saveFFmpegPreset(ffmpegPreset);
-            
+
             if (result.success) {
               alert(`✅ Preset FFmpeg sauvegardé sur le serveur!\n\nFichier: ${result.path}`);
             } else {
@@ -2792,21 +3021,21 @@
         const loadFFmpegPresetFromServer = async () => {
           try {
             const result = await window.electronAPI.loadFFmpegPreset();
-            
+
             if (result.success) {
               // Apply the loaded preset to current config
               const preset = result.preset;
-              
+
               if (preset.ffmpeg) {
-                setConfig(prev => ({
+                setConfig((prev) => ({
                   ...prev,
                   ffmpeg: preset.ffmpeg,
                   encode_preset: preset.encode_preset || prev.encode_preset,
                   cq: preset.cq || prev.cq,
                   cpu_preset: preset.cpu_preset || prev.cpu_preset,
-                  cpu_crf: preset.cpu_crf || prev.cpu_crf
+                  cpu_crf: preset.cpu_crf || prev.cpu_crf,
                 }));
-                
+
                 alert(`✅ Preset FFmpeg chargé depuis le serveur!\n\nSauvegardé le: ${new Date(preset.saved_at).toLocaleString()}`);
               } else {
                 alert("⚠️ Le preset chargé ne contient pas de paramètres FFmpeg valides");
@@ -2903,22 +3132,16 @@
                     <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 mb-4">
                       <h3 className="text-md font-semibold text-white mb-3">� Gestion des Présets FFmpeg</h3>
                       <div className="flex gap-3">
-                        <button
-                          onClick={saveFFmpegPresetToServer}
-                          className="btn-success flex-1"
-                          title="Sauvegarder les paramètres FFmpeg actuels sur le serveur"
-                        >
+                        <button onClick={saveFFmpegPresetToServer} className="btn-success flex-1" title="Sauvegarder les paramètres FFmpeg actuels sur le serveur">
                           📤 Sauvegarder sur serveur
                         </button>
-                        <button
-                          onClick={loadFFmpegPresetFromServer}
-                          className="btn-secondary flex-1"
-                          title="Charger les paramètres FFmpeg depuis le serveur"
-                        >
+                        <button onClick={loadFFmpegPresetFromServer} className="btn-secondary flex-1" title="Charger les paramètres FFmpeg depuis le serveur">
                           📥 Charger depuis serveur
                         </button>
                       </div>
-                      <p className="text-xs text-gray-400 mt-2">Les présets sont sauvegardés dans <code>ffmpeg_preset.json</code> à la racine du serveur WebDAV/SFTP</p>
+                      <p className="text-xs text-gray-400 mt-2">
+                        Les présets sont sauvegardés dans <code>ffmpeg_preset.json</code> à la racine du serveur WebDAV/SFTP
+                      </p>
                     </div>
 
                     {/* GPU Settings */}
@@ -3194,8 +3417,6 @@
                             <strong>Recommandé:</strong> Activé (améliore les zones détaillées)
                           </p>
                         </div>
-
-
                       </div>
                     </div>
 
@@ -3308,12 +3529,7 @@
 
                         <div>
                           <label className="flex items-center cursor-pointer">
-                            <input 
-                              type="checkbox" 
-                              checked={config.ffmpeg?.force_gpu !== false} 
-                              onChange={(e) => updateConfigNested("ffmpeg", "force_gpu", e.target.checked)} 
-                              className="mr-2" 
-                            />
+                            <input type="checkbox" checked={config.ffmpeg?.force_gpu !== false} onChange={(e) => updateConfigNested("ffmpeg", "force_gpu", e.target.checked)} className="mr-2" />
                             <span className="text-sm text-gray-300">
                               Force GPU Encoding
                               <span className="ml-2 text-xs text-blue-400">(skip GPU test)</span>
@@ -3389,9 +3605,9 @@
                     <div className="mt-4 p-3 bg-gray-800 rounded border border-gray-600">
                       <div className="text-xs text-gray-400 mb-1">Commande FFmpeg (aperçu):</div>
                       <div className="text-xs text-green-400 font-mono break-all">
-                        ffmpeg -i input.mkv -c:v hevc_nvenc -preset {config.encode_preset || "p7"} -rc {config.ffmpeg?.rc_mode || "vbr_hq"} -cq {config.cq || 24} -b:v{" "}
-                        {config.ffmpeg?.bitrate || "3M"} -maxrate {config.ffmpeg?.maxrate || "6M"} -profile:v main10 -pix_fmt p010le -spatial-aq {config.ffmpeg?.spatial_aq !== false ? "1" : "0"}{" "}
-                        -temporal-aq {config.ffmpeg?.temporal_aq !== false ? "1" : "0"} -aq-strength {config.ffmpeg?.aq_strength || 8} -bf {config.ffmpeg?.bframes || 3} -b_ref_mode{" "}
+                        ffmpeg -i input.mkv -c:v hevc_nvenc -preset {config.encode_preset || "p7"} -rc {config.ffmpeg?.rc_mode || "vbr_hq"} -cq {config.cq || 24} -b:v {config.ffmpeg?.bitrate || "3M"}{" "}
+                        -maxrate {config.ffmpeg?.maxrate || "6M"} -profile:v main10 -pix_fmt p010le -spatial-aq {config.ffmpeg?.spatial_aq !== false ? "1" : "0"} -temporal-aq{" "}
+                        {config.ffmpeg?.temporal_aq !== false ? "1" : "0"} -aq-strength {config.ffmpeg?.aq_strength || 8} -bf {config.ffmpeg?.bframes || 3} -b_ref_mode{" "}
                         {config.ffmpeg?.b_ref_mode || "middle"} -rc-lookahead {config.ffmpeg?.lookahead || 32} -multipass {config.ffmpeg?.multipass || "fullres"} -c:a copy output.mkv
                       </div>
                     </div>
@@ -3616,12 +3832,7 @@
                         <p className="text-xs text-gray-400 ml-6">Files already in HEVC format will be copied without re-encoding (faster but no size reduction)</p>
 
                         <label className="flex items-center cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={config.advanced?.simulation_mode || false}
-                            onChange={(e) => updateConfig("advanced.simulation_mode", e.target.checked)}
-                            className="mr-2"
-                          />
+                          <input type="checkbox" checked={config.advanced?.simulation_mode || false} onChange={(e) => updateConfig("advanced.simulation_mode", e.target.checked)} className="mr-2" />
                           <span className="text-sm text-gray-300">🧪 Simulation mode (testing only)</span>
                         </label>
                         <p className="text-xs text-gray-400 ml-6">Skip encoding entirely - just copy files to test download/upload pipeline</p>
@@ -4015,7 +4226,6 @@
         const shutdownWhenFinishedRef = React.useRef(shutdownWhenFinished);
         React.useEffect(() => {
           shutdownWhenFinishedRef.current = shutdownWhenFinished;
-
         }, [shutdownWhenFinished]);
 
         // Load blockLargerEncoded preference from localStorage
@@ -4502,7 +4712,7 @@
                       loadStats={loadStats}
                     />
                   ) : (
-                    <CompletedJobs jobs={jobs} loadJobs={loadJobs} />
+                    <CompletedJobs jobs={jobs} loadJobs={loadJobs} userConfig={userConfig} />
                   )}
                 </div>
               </div>

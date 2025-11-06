@@ -138,27 +138,37 @@ class QueueManager extends EventEmitter {
     const baseName = lastDot >= 0 ? filename.substring(0, lastDot) : filename;
     const ext = lastDot >= 0 ? filename.substring(lastDot) : "";
 
-    // Remove old codec tags (x264, x265, h264, h265, hevc, etc.)
-    let cleanName = baseName
-      .replace(/\[.*?(x264|x265|h264|h265|hevc|H\.264|H\.265|HEVC).*?\]/gi, "")
-      .replace(/\b(x264|x265|h264|h265|hevc|H\.264|H\.265|HEVC)\b/gi, "")
-      .trim();
+    // Get release tag from config (default: TaG)
+    const releaseTag = this.config.advanced?.release_tag || "TaG";
 
-    // Get encoding parameters
-    const isGPU = codecAfter.includes("nvenc") || codecAfter.includes("_nvenc");
-    const codecTag = isGPU ? "hevc_nvenc" : "x265";
+    // Replace all old codec formats with x265
+    let newBaseName = baseName
+      .replace(/\[([^\]]*)(x265|x264|h264|h265|h\.264|h\.265|hevc|HEVC|av1|AV1|avc|AVC|vp9|VP9)([^\]]*)\]/gi, "[x265]")
+      .replace(/\b(x265|x264|h264|h265|h\.264|h\.265|hevc|HEVC|av1|AV1|avc|AVC|vp9|VP9)\b/gi, "x265");
 
-    // Get quality setting
-    const cq = this.config.ffmpeg?.cq || this.config.cq || 24;
-    const preset = isGPU ? this.config.ffmpeg?.encode_preset || this.config.encode_preset || "p7" : this.config.ffmpeg?.cpu_preset || this.config.cpu_preset || "medium";
+    // Check if filename has pattern: name[codec]-TAG.ext
+    const tagPattern = /\[x265\]-([^.]+)$/i;
+    const tagMatch = newBaseName.match(tagPattern);
 
-    // Build new filename with encoding info
-    const encodingInfo = isGPU ? `[${codecTag}-${preset}-cq${cq}]` : `[${codecTag}-${preset}-crf${cq}]`;
-
-    const newName = `${cleanName} ${encodingInfo}${ext}`;
+    if (tagMatch) {
+      // Replace existing tag with configured tag
+      newBaseName = newBaseName.replace(tagPattern, `[x265]-${releaseTag}`);
+      logger.debug(`Replaced tag: ${tagMatch[1]} → ${releaseTag}`);
+    } else {
+      // Check if it ends with [x265] without tag
+      if (/\[x265\]$/i.test(newBaseName)) {
+        // Add tag after [x265]
+        newBaseName = newBaseName.replace(/\[x265\]$/i, `[x265]-${releaseTag}`);
+        logger.debug(`Added tag after [x265]: ${releaseTag}`);
+      } else {
+        // No [codec] pattern, just add tag before extension
+        newBaseName = `${newBaseName}-${releaseTag}`;
+        logger.debug(`Added tag at end: ${releaseTag}`);
+      }
+    }
 
     // Always return with forward slashes for server paths
-    return dir ? `${dir}/${newName}` : newName;
+    return dir ? `${dir}/${newBaseName}${ext}` : `${newBaseName}${ext}`;
   }
 
   pause() {
@@ -191,6 +201,9 @@ class QueueManager extends EventEmitter {
 
   async addJob(filePath, fileInfo) {
     try {
+      logger.info(`[QueueManager.addJob] FilePath: ${filePath}`);
+      logger.info(`[QueueManager.addJob] FileInfo:`, JSON.stringify(fileInfo, null, 2));
+
       const jobData = {
         filepath: filePath,
         size: fileInfo.size || 0,
@@ -206,6 +219,8 @@ class QueueManager extends EventEmitter {
         subtitles: fileInfo.subtitles || 0,
         pause_before_upload: fileInfo.pauseBeforeUpload ? 1 : 0,
       };
+
+      logger.info(`[QueueManager.addJob] JobData to be inserted:`, JSON.stringify(jobData, null, 2));
 
       const jobId = await createJob(jobData);
       logger.info(`Added job ${jobId}: ${filePath} (pause before upload: ${jobData.pause_before_upload})`);
@@ -682,15 +697,20 @@ class QueueManager extends EventEmitter {
         logger.info(`[ENCODE] Completed job ${job.id}`);
 
         // Create backup of original
+        logger.info(`[ENCODE] Creating backup of original for job ${job.id}...`);
         await this.createBackup(localPath, job);
+        logger.info(`[ENCODE] Backup created for job ${job.id}`);
 
         // Determine actual codec used (GPU or CPU)
         const codecAfter = this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)";
 
         // Get encoded file metadata
+        logger.info(`[ENCODE] Getting encoded file info for job ${job.id}...`);
         const encodedInfo = await this.encoder.getVideoInfo(result.outputPath);
+        logger.info(`[ENCODE] Encoded file info retrieved for job ${job.id}`);
 
         // Update progress file
+        logger.info(`[ENCODE] Updating progress file for job ${job.id}...`);
         await this.updateProgressFile(job, {
           originalSize: videoInfo.size,
           encodedSize: encodedInfo.size,
@@ -699,6 +719,7 @@ class QueueManager extends EventEmitter {
           duration: videoInfo.duration,
           encodingTime: (Date.now() - new Date(job.started_at)) / 1000,
         });
+        logger.info(`[ENCODE] Progress file updated for job ${job.id}`);
 
         // Save encoding parameters as JSON string for later display
         const encodingParamsJson = JSON.stringify(result.encodingParams);
@@ -802,23 +823,25 @@ class QueueManager extends EventEmitter {
       logger.info(`[UPLOAD] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "uploading" });
 
-      // Keep original filename - no renaming
-      logger.info(`[UPLOAD] Uploading to: ${job.filepath} (keeping original name)`);
+      // Generate new filename with x265 codec and release tag
+      const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
+      const newServerPath = this.generateEncodedFilename(job.filepath, codecAfter);
 
-      // Start upload asynchronously - upload to original path (replaces original file)
+      logger.info(`[UPLOAD] Uploading to: ${newServerPath}`);
+      logger.info(`[UPLOAD] Original path: ${job.filepath}`);
+
+      // Start upload asynchronously - upload to new path with x265 tag
       const uploadPromise = this.transferManager
-        .uploadFile(encodedPath, job.filepath, (progress) => {
+        .uploadFile(encodedPath, newServerPath, (progress) => {
           this.handleUploadProgress(job.id, progress);
         })
         .then(async () => {
           logger.info(`[UPLOAD] Completed job ${job.id}`);
           this.uploadingJobs.delete(job.id);
 
-          // Keep the backup file (.bak.<ext>) on server - do NOT delete it
-          const parsedPath = path.parse(job.filepath);
-          const backupFilename = `${parsedPath.name}.bak${parsedPath.ext}`;
-          const serverBackupPath = path.posix.join(parsedPath.dir, backupFilename);
-          logger.info(`[UPLOAD] Original file backed up as: ${serverBackupPath}`);
+          // The original file remains unchanged on server
+          logger.info(`[UPLOAD] Original file remains at: ${job.filepath}`);
+          logger.info(`[UPLOAD] New encoded file uploaded to: ${newServerPath}`);
 
           // Calculate local backup paths
           const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
@@ -826,11 +849,11 @@ class QueueManager extends EventEmitter {
           const localEncodedPath = path.join(this.config.storage.local_backup, "encoded", normalizedPath);
 
           // Mark job as completed with actual codec used and backup paths
-          const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
           await markJobCompleted(job.id, codecAfter, {
             localOriginal: localOriginalPath,
             localEncoded: localEncodedPath,
-            serverBackup: serverBackupPath,
+            serverOriginal: job.filepath,
+            serverEncoded: newServerPath,
           });
           await this.cleanupJobFiles(job);
 
@@ -840,15 +863,8 @@ class QueueManager extends EventEmitter {
           logger.error(`[UPLOAD] Failed job ${job.id}:`, error);
           this.uploadingJobs.delete(job.id);
 
-          // Restore the backup file (.bak.<ext>) on failure
-          try {
-            const restored = await this.transferManager.restoreBackupFile(job.filepath);
-            if (restored) {
-              logger.info(`Original file restored after upload failure`);
-            }
-          } catch (restoreError) {
-            logger.warn(`Could not restore backup file:`, restoreError);
-          }
+          // No backup to restore since we upload to a new filename
+          logger.info(`[UPLOAD] Upload failed, original file unchanged at: ${job.filepath}`);
 
           await markJobFailed(job.id, error);
           await this.cleanupJobFiles(job);

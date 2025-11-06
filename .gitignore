@@ -10,7 +10,7 @@ build/
 *.AppImage
 *.deb
 *.rpm
-
+*.csv
 # Electron
 out/
 

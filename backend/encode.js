@@ -69,7 +69,15 @@ class VideoEncoder extends EventEmitter {
 
   async getVideoInfo(inputPath) {
     return new Promise((resolve, reject) => {
+      // Add timeout to prevent hanging
+      const timeout = setTimeout(() => {
+        logger.error(`[VIDEO PROBE] Timeout after 30s for: ${inputPath}`);
+        reject(new Error(`FFprobe timeout for ${path.basename(inputPath)}`));
+      }, 30000); // 30 second timeout
+
       ffmpeg.ffprobe(inputPath, (err, metadata) => {
+        clearTimeout(timeout);
+
         if (err) {
           logger.error(`Failed to probe video ${inputPath}:`, err);
           reject(err);
@@ -89,6 +97,20 @@ class VideoEncoder extends EventEmitter {
           logger.info(`[VIDEO PROBE] File: ${path.basename(inputPath)}`);
           logger.info(`[VIDEO PROBE] Codec: ${videoStream.codec_name}, Width: ${videoStream.width}, Height: ${videoStream.height}`);
           logger.info(`[VIDEO PROBE] Resolution: ${videoStream.width}x${videoStream.height}`);
+          logger.info(`[VIDEO PROBE] FPS raw: ${videoStream.r_frame_rate}, Avg frame rate: ${videoStream.avg_frame_rate}`);
+
+          // Calculate FPS correctly from fraction
+          let fps = 0;
+          if (videoStream.r_frame_rate) {
+            const fpsParts = videoStream.r_frame_rate.split("/");
+            if (fpsParts.length === 2) {
+              fps = parseInt(fpsParts[0]) / parseInt(fpsParts[1]);
+            } else {
+              fps = parseFloat(videoStream.r_frame_rate);
+            }
+          }
+
+          logger.info(`[VIDEO PROBE] Calculated FPS: ${fps.toFixed(2)}`);
 
           const info = {
             duration: parseFloat(metadata.format.duration) || 0,
@@ -98,7 +120,7 @@ class VideoEncoder extends EventEmitter {
               codec: videoStream.codec_name,
               width: videoStream.width,
               height: videoStream.height,
-              fps: eval(videoStream.r_frame_rate) || 0,
+              fps: fps,
               bitrate: parseInt(videoStream.bit_rate) || 0,
             },
             audio: audioStreams.map((stream, index) => ({
@@ -223,11 +245,13 @@ class VideoEncoder extends EventEmitter {
       // Get video info for progress calculation
       const videoInfo = await this.getVideoInfo(inputPath);
       const totalDuration = videoInfo.duration;
-      const totalFrames = Math.round(totalDuration * videoInfo.video.fps);
+      // Fix: Divide by 2 because FFmpeg reports double the actual frames
+      const totalFrames = Math.round((totalDuration * videoInfo.video.fps) / 2);
 
       logger.info(`Starting encoding: ${inputPath} -> ${outputPath}`);
       logger.info(`Video info: ${videoInfo.video.width}x${videoInfo.video.height}, ${formatDuration(totalDuration)}, ${videoInfo.video.codec}`);
-      logger.info(`Total frames: ${totalFrames} @ ${videoInfo.video.fps.toFixed(2)} fps`);
+      logger.info(`Duration: ${totalDuration.toFixed(2)}s, FPS: ${videoInfo.video.fps.toFixed(2)}`);
+      logger.info(`Calculated total frames: ${totalFrames} (Duration: ${totalDuration.toFixed(2)}s × FPS: ${videoInfo.video.fps.toFixed(2)} ÷ 2)`);
       logger.info(`Audio tracks: ${videoInfo.audio.length} (${videoInfo.audio.map((a) => `${a.language}:${a.codec}`).join(", ")})`);
       logger.info(`Subtitle tracks: ${videoInfo.subtitles.length} (${videoInfo.subtitles.map((s) => `${s.language}:${s.codec}`).join(", ")})`);
       logger.info(`Encoder mode: ${this.gpuAvailable ? "GPU (NVENC)" : "CPU (x265)"}`);
@@ -376,6 +400,7 @@ class VideoEncoder extends EventEmitter {
 
             const elapsedTime = (Date.now() - this.startTime) / 1000;
             logger.info(`Encoding completed in ${formatDuration(elapsedTime)}: ${outputPath}`);
+            logger.info(`Expected frames: ${totalFrames}, Actual encoding time: ${formatDuration(elapsedTime)}`);
 
             try {
               // Verify output file exists and get final info

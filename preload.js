@@ -92,6 +92,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   playEncodedFile: (filename) => ipcRenderer.invoke("playEncodedFile", filename),
   compareWithMPV: (filename) => ipcRenderer.invoke("compareWithMPV", filename),
   compareWithMPVVertical: (filename) => ipcRenderer.invoke("compareWithMPVVertical", filename),
+  compareWithMPVInteractive: (filename) => ipcRenderer.invoke("compareWithMPVInteractive", filename),
 
   // Backup and restore operations
   restoreFromLocal: (jobId, type) => ipcRenderer.invoke("restore:fromLocal", jobId, type),

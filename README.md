@@ -26,6 +26,19 @@
 
 ## 🚀 Quick Start
 
+### Option 1: Automated Setup (Windows)
+
+**Double-click `setup-and-run.bat`** - Automatically installs everything and launches the app!
+
+This script will:
+
+- ✅ Check and install Node.js if needed
+- ✅ Install npm dependencies
+- ✅ Extract binaries from exe/\*.7z
+- ✅ Start the application
+
+### Option 2: Manual Setup
+
 ```bash
 # 1. Clone and install
 git clone https://github.com/MonsieurZed/Sharkoder.git
@@ -39,10 +52,6 @@ cp sharkoder.config.example.json sharkoder.config.json
 # 3. Launch
 npm start
 ```
-
-### Windows One-Click Setup
-
-Run `setup.bat` to auto-install Node.js and dependencies.
 
 ---
 

@@ -497,6 +497,9 @@ const setupIpcHandlers = () => {
   // Queue operations
   ipcMain.handle("queue:addJob", async (event, filePath, fileInfo) => {
     try {
+      logger.info(`[queue:addJob] Adding job for: ${filePath}`);
+      logger.info(`[queue:addJob] FileInfo received:`, JSON.stringify(fileInfo, null, 2));
+
       const jobId = await queueManager.addJob(filePath, fileInfo);
       return { success: true, jobId };
     } catch (error) {
@@ -992,6 +995,92 @@ const setupIpcHandlers = () => {
       return { success: true };
     } catch (error) {
       logger.error(`Failed to compare with MPV (vertical): ${error.message}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Compare with MPV - Interactive A/B comparison mode
+  ipcMain.handle("compareWithMPVInteractive", async (event, filepath) => {
+    try {
+      logger.info(`[compareWithMPVInteractive] Starting interactive comparison for: ${filepath}`);
+
+      const config = require("./sharkoder.config.json");
+      let localBackupPath = config.local_backup || config.storage?.local_backup;
+
+      if (!localBackupPath) {
+        throw new Error("local_backup path not configured");
+      }
+
+      // Normalize path
+      const normalizedPath = filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+      const originalPath = path.join(localBackupPath, "originals", normalizedPath);
+      const encodedPath = path.join(localBackupPath, "encoded", normalizedPath);
+
+      // Check if both files exist
+      const originalExists = await fs.pathExists(originalPath);
+      const encodedExists = await fs.pathExists(encodedPath);
+
+      if (!originalExists) {
+        throw new Error(`Original file not found: ${originalPath}`);
+      }
+
+      if (!encodedExists) {
+        throw new Error(`Encoded file not found: ${encodedPath}`);
+      }
+
+      // Get MPV path from config or check local exe folder
+      const localMpvPath = path.join(__dirname, "exe", "mpv.exe");
+      let mpvPath = config.storage?.mpv_path || config.mpv_path;
+
+      if (!mpvPath) {
+        mpvPath = (await fs.pathExists(localMpvPath)) ? localMpvPath : "mpv";
+        logger.info(`[compareWithMPVInteractive] Using MPV from: ${mpvPath}`);
+      }
+
+      // Launch MPV with interactive comparison using external file
+      const { spawn } = require("child_process");
+
+      // Create temporary MPV input.conf for custom keybindings
+      const tmpInputConfPath = path.join(__dirname, "mpv-ab-input.conf");
+      const inputConf = `# Temporary MPV input.conf for A/B comparison
+o cycle video
+F1 set video 1
+F2 set video 2
+`;
+      await fs.writeFile(tmpInputConfPath, inputConf);
+
+      // MPV Interactive Mode - A/B switching with keyboard shortcuts
+      // 'O' to cycle video tracks, F1/F2 to select specific track
+      const mpvArgs = [
+        originalPath,
+        `--external-file=${encodedPath}`,
+        `--input-conf=${tmpInputConfPath}`,
+        "--osd-level=3",
+        "--osd-duration=2000",
+        `--osd-status-msg=\${?current-tracks/video/selected==1:🎬 ORIGINAL:🎞️ ENCODED}`,
+        "--osd-bar=no",
+        "--osd-on-seek=msg-bar",
+        "--loop-file=inf",
+        "--keep-open=yes",
+        "--hr-seek=yes",
+        "--hr-seek-framedrop=no",
+      ];
+
+      logger.info(`[compareWithMPVInteractive] Created input.conf at: ${tmpInputConfPath}`);
+      logger.info(`[compareWithMPVInteractive] Launching MPV: ${mpvPath} ${mpvArgs.join(" ")}`);
+
+      const mpvProcess = spawn(mpvPath, mpvArgs, {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      mpvProcess.unref();
+
+      logger.info(`[compareWithMPVInteractive] MPV launched successfully`);
+      logger.info(`[compareWithMPVInteractive] Controls: Press 'O' to cycle videos, F1=Original, F2=Encoded`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to launch interactive MPV comparison: ${error.message}`, error);
       return { success: false, error: error.message };
     }
   });

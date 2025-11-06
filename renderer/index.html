@@ -422,11 +422,6 @@
             <div className="flex justify-between text-xs mb-1">
               <div className="flex items-center space-x-3">
                 <span className="font-medium">{Math.round(progress)}%</span>
-                {type === "encoding" && currentTime && totalDuration && (
-                  <span className="text-gray-400">
-                    {formatTime(currentTime)} / {formatTime(totalDuration)}
-                  </span>
-                )}
                 {fps && fps > 0 && <span className="text-blue-400">🎬 {Math.round(fps)} FPS</span>}
                 {speed && speed > 0 && <span className="text-purple-400">⚡ {formatSpeed(speed)}</span>}
               </div>
@@ -1253,30 +1248,40 @@
           // Check if video metadata is already loaded
           const hasMetadata = file.codec && file.container && file.resolution;
 
+          console.log("[addToQueue] File received:", file);
+          console.log("[addToQueue] Has metadata:", hasMetadata);
+
           let fileWithMetadata = file;
 
           // If metadata not loaded, fetch it first
           if (!hasMetadata) {
             try {
-              console.log("Fetching video metadata before adding to queue...");
+              console.log("[addToQueue] Fetching video metadata for:", file.path);
               const result = await window.electronAPI.webdavGetFileInfo(file.path);
+
+              console.log("[addToQueue] Metadata fetch result:", result);
 
               if (result.success && result.fileInfo) {
                 fileWithMetadata = { ...file, ...result.fileInfo };
-                console.log("Metadata loaded:", fileWithMetadata);
+                console.log("[addToQueue] Metadata merged:", fileWithMetadata);
               } else {
-                console.warn("Failed to load metadata, proceeding with basic info");
+                console.warn("[addToQueue] Failed to load metadata, proceeding with basic info");
               }
             } catch (error) {
-              console.error("Error loading metadata:", error);
+              console.error("[addToQueue] Error loading metadata:", error);
             }
+          } else {
+            console.log("[addToQueue] Using existing metadata");
           }
 
           // Add to queue with metadata and pauseBeforeUpload setting
-          onAddToQueue(fileWithMetadata.path, {
+          const jobData = {
             ...fileWithMetadata,
             pauseBeforeUpload: pauseBeforeUpload,
-          });
+          };
+
+          console.log("[addToQueue] Sending to queue with data:", jobData);
+          onAddToQueue(fileWithMetadata.path, jobData);
         };
 
         // Charger les métadonnées vidéo d'un fichier spécifique
@@ -2523,119 +2528,149 @@
                                 </div>
                               </div>
 
-                              <div className="flex items-center gap-2 flex-wrap">
-                                {/* Play buttons for local files */}
-                                {status.localOriginal && (
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        const result = await window.electronAPI.playOriginalFile(job.filepath);
-                                        if (!result.success) {
-                                          alert("Failed to open file: " + result.error);
-                                        }
-                                      } catch (error) {
-                                        console.error("Failed to play original file:", error);
-                                        alert("Failed to open file: " + error.message);
-                                      }
-                                    }}
-                                    className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
-                                    title="Play original file with MPV"
-                                  >
-                                    ▶️ Play Original
-                                  </button>
-                                )}
-                                {status.localEncoded && (
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        const result = await window.electronAPI.playEncodedFile(job.filepath);
-                                        if (!result.success) {
-                                          alert("Failed to open file: " + result.error);
-                                        }
-                                      } catch (error) {
-                                        console.error("Failed to play encoded file:", error);
-                                        alert("Failed to open file: " + error.message);
-                                      }
-                                    }}
-                                    className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
-                                    title="Play encoded file with MPV"
-                                  >
-                                    ▶️ Play Encoded
-                                  </button>
-                                )}
+                              <div className="flex flex-col gap-2">
+                                {/* PLAYBACK GROUP */}
+                                <div className="flex items-start gap-2">
+                                  <span className="text-gray-400 text-xs font-semibold mr-1 min-w-[60px] pt-1">Play:</span>
+                                  <div className="flex gap-2 flex-wrap">
+                                    {status.localOriginal && (
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            const result = await window.electronAPI.playOriginalFile(job.filepath);
+                                            if (!result.success) {
+                                              alert("Failed to open file: " + result.error);
+                                            }
+                                          } catch (error) {
+                                            console.error("Failed to play original file:", error);
+                                            alert("Failed to open file: " + error.message);
+                                          }
+                                        }}
+                                        className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+                                        title="Play original file with MPV"
+                                      >
+                                        ▶️ Original
+                                      </button>
+                                    )}
+                                    {status.localEncoded && (
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            const result = await window.electronAPI.playEncodedFile(job.filepath);
+                                            if (!result.success) {
+                                              alert("Failed to open file: " + result.error);
+                                            }
+                                          } catch (error) {
+                                            console.error("Failed to play encoded file:", error);
+                                            alert("Failed to open file: " + error.message);
+                                          }
+                                        }}
+                                        className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
+                                        title="Play encoded file with MPV"
+                                      >
+                                        ▶️ Encoded
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
 
-                                {/* Compare button - both files must exist locally */}
+                                {/* COMPARISON GROUP */}
                                 {status.localOriginal && status.localEncoded && (
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        const result = await window.electronAPI.compareWithMPV(job.filepath);
-                                        if (!result.success) {
-                                          alert("Failed to launch MPV: " + result.error);
-                                        }
-                                      } catch (error) {
-                                        console.error("Failed to compare with MPV:", error);
-                                        alert("Failed to launch MPV: " + error.message);
-                                      }
-                                    }}
-                                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded"
-                                    title="Compare original (top) and encoded (bottom) with MPV"
-                                  >
-                                    🔀 Compare (MPV)
-                                  </button>
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-400 text-xs font-semibold mr-1 min-w-[60px] pt-1">Compare:</span>
+                                    <div className="flex gap-2 flex-wrap">
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            const result = await window.electronAPI.compareWithMPV(job.filepath);
+                                            if (!result.success) {
+                                              alert("Failed to launch MPV: " + result.error);
+                                            }
+                                          } catch (error) {
+                                            console.error("Failed to compare with MPV:", error);
+                                            alert("Failed to launch MPV: " + error.message);
+                                          }
+                                        }}
+                                        className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded"
+                                        title="Compare original (top) and encoded (bottom) with MPV"
+                                      >
+                                        🔀 Horizontal
+                                      </button>
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            const result = await window.electronAPI.compareWithMPVVertical(job.filepath);
+                                            if (!result.success) {
+                                              alert("Failed to launch MPV: " + result.error);
+                                            }
+                                          } catch (error) {
+                                            console.error("Failed to compare with MPV (vertical):", error);
+                                            alert("Failed to launch MPV: " + error.message);
+                                          }
+                                        }}
+                                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded"
+                                        title="Compare original (left) and encoded (right) side-by-side with MPV"
+                                      >
+                                        ⚌ Vertical
+                                      </button>
+                                      <button
+                                        onClick={async () => {
+                                          try {
+                                            const result = await window.electronAPI.compareWithMPVInteractive(job.filepath);
+                                            if (!result.success) {
+                                              alert("Failed to launch MPV: " + result.error);
+                                            }
+                                          } catch (error) {
+                                            console.error("Failed to compare (interactive):", error);
+                                            alert("Failed to launch comparison: " + error.message);
+                                          }
+                                        }}
+                                        className="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 text-white text-xs rounded"
+                                        title="Interactive A/B comparison - Press O to switch | F1=Original F2=Encoded"
+                                      >
+                                        🔄 A/B
+                                      </button>
+                                    </div>
+                                  </div>
                                 )}
 
-                                {/* Vertical compare button - both files must exist locally */}
-                                {status.localOriginal && status.localEncoded && (
-                                  <button
-                                    onClick={async () => {
-                                      try {
-                                        const result = await window.electronAPI.compareWithMPVVertical(job.filepath);
-                                        if (!result.success) {
-                                          alert("Failed to launch MPV: " + result.error);
-                                        }
-                                      } catch (error) {
-                                        console.error("Failed to compare with MPV (vertical):", error);
-                                        alert("Failed to launch MPV: " + error.message);
-                                      }
-                                    }}
-                                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded"
-                                    title="Compare original (left) and encoded (right) side-by-side with MPV"
-                                  >
-                                    ⚌ Compare Vertical
-                                  </button>
-                                )}
-
-                                {/* Restore buttons */}
-                                {status.localOriginal && (
-                                  <button
-                                    onClick={() => handleRestore(job.id, "original")}
-                                    disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
-                                    className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded disabled:opacity-50"
-                                    title="Restore original file from local backup"
-                                  >
-                                    ⬆️ Restore Original
-                                  </button>
-                                )}
-                                {status.localEncoded && (
-                                  <button
-                                    onClick={() => handleRestore(job.id, "encoded")}
-                                    disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
-                                    className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50"
-                                    title="Re-upload encoded file from local backup"
-                                  >
-                                    ⬆️ Re-upload Encoded
-                                  </button>
-                                )}
-                                {status.serverBackup && (
-                                  <button
-                                    onClick={() => handleRestore(job.id, "server")}
-                                    disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
-                                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50"
-                                    title="Restore from server backup (.bak.<ext>)"
-                                  >
-                                    ↩️ Restore Server Backup
-                                  </button>
+                                {/* RESTORE/UPLOAD GROUP */}
+                                {(status.localOriginal || status.localEncoded || status.serverBackup) && (
+                                  <div className="flex items-start gap-2">
+                                    <span className="text-gray-400 text-xs font-semibold mr-1 min-w-[60px] pt-1">Restore:</span>
+                                    <div className="flex gap-2 flex-wrap">
+                                      {status.localOriginal && (
+                                        <button
+                                          onClick={() => handleRestore(job.id, "original")}
+                                          disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
+                                          className="px-3 py-1 bg-yellow-600 hover:bg-yellow-700 text-white text-xs rounded disabled:opacity-50"
+                                          title="Restore original file from local backup"
+                                        >
+                                          ⬆️ Original
+                                        </button>
+                                      )}
+                                      {status.localEncoded && (
+                                        <button
+                                          onClick={() => handleRestore(job.id, "encoded")}
+                                          disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
+                                          className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded disabled:opacity-50"
+                                          title="Re-upload encoded file from local backup"
+                                        >
+                                          ⬆️ Encoded
+                                        </button>
+                                      )}
+                                      {status.serverBackup && (
+                                        <button
+                                          onClick={() => handleRestore(job.id, "server")}
+                                          disabled={loading || (restoreProgress[job.id] && restoreProgress[job.id].started)}
+                                          className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded disabled:opacity-50"
+                                          title="Restore from server backup (.bak.<ext>)"
+                                        >
+                                          ↩️ Server Backup
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
                                 )}
                               </div>
                             </div>

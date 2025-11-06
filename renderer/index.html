@@ -1249,10 +1249,32 @@
           navigateToFolder(parentPath);
         };
 
-        const addToQueue = (file) => {
-          // Add directly to queue without modal, using global pauseBeforeUpload setting
-          onAddToQueue(file.path, {
-            ...file,
+        const addToQueue = async (file) => {
+          // Check if video metadata is already loaded
+          const hasMetadata = file.codec && file.container && file.resolution;
+
+          let fileWithMetadata = file;
+
+          // If metadata not loaded, fetch it first
+          if (!hasMetadata) {
+            try {
+              console.log("Fetching video metadata before adding to queue...");
+              const result = await window.electronAPI.webdavGetFileInfo(file.path);
+
+              if (result.success && result.fileInfo) {
+                fileWithMetadata = { ...file, ...result.fileInfo };
+                console.log("Metadata loaded:", fileWithMetadata);
+              } else {
+                console.warn("Failed to load metadata, proceeding with basic info");
+              }
+            } catch (error) {
+              console.error("Error loading metadata:", error);
+            }
+          }
+
+          // Add to queue with metadata and pauseBeforeUpload setting
+          onAddToQueue(fileWithMetadata.path, {
+            ...fileWithMetadata,
             pauseBeforeUpload: pauseBeforeUpload,
           });
         };
@@ -2200,7 +2222,37 @@
                                             <span className="text-white font-mono">{job.codec_before || "N/A"}</span>
                                           </div>
                                           <div className="flex justify-between">
-                                            <span className="text-gray-400">Size:</span>
+                                            <span className="text-gray-400">Container:</span>
+                                            <span className="text-white font-mono">{job.container || "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Resolution:</span>
+                                            <span className="text-white font-mono">{job.resolution || "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Duration:</span>
+                                            <span className="text-white font-mono">
+                                              {job.duration ? `${Math.floor(job.duration / 60)}:${String(Math.floor(job.duration % 60)).padStart(2, "0")}` : "N/A"}
+                                            </span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Bitrate:</span>
+                                            <span className="text-white font-mono">{job.bitrate ? `${(job.bitrate / 1000000).toFixed(2)} Mbps` : "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Audio Tracks:</span>
+                                            <span className="text-white font-mono">{job.audio || 0}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Audio Codec:</span>
+                                            <span className="text-white font-mono">{job.audioCodec || "N/A"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Subtitles:</span>
+                                            <span className="text-white font-mono">{job.subtitles || 0}</span>
+                                          </div>
+                                          <div className="flex justify-between border-t border-red-900 pt-2 mt-2">
+                                            <span className="text-gray-400 font-semibold">Size:</span>
                                             <span className="text-white font-mono font-bold">{formatSize(job.size)}</span>
                                           </div>
                                         </div>
@@ -2218,7 +2270,39 @@
                                             <span className="text-white font-mono">{job.codec_after || "HEVC"}</span>
                                           </div>
                                           <div className="flex justify-between">
-                                            <span className="text-gray-400">Size:</span>
+                                            <span className="text-gray-400">Container:</span>
+                                            <span className="text-white font-mono">MKV</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Resolution:</span>
+                                            <span className="text-white font-mono">{job.resolution || "Same"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Duration:</span>
+                                            <span className="text-white font-mono">
+                                              {job.duration ? `${Math.floor(job.duration / 60)}:${String(Math.floor(job.duration % 60)).padStart(2, "0")}` : "Same"}
+                                            </span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Bitrate:</span>
+                                            <span className="text-white font-mono">
+                                              {job.size_after && job.duration ? `${((job.size_after * 8) / (job.duration * 1000000)).toFixed(2)} Mbps` : "N/A"}
+                                            </span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Audio Tracks:</span>
+                                            <span className="text-white font-mono">{job.audio || "Same"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Audio Codec:</span>
+                                            <span className="text-white font-mono">{job.audioCodec || "Same"}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-400">Subtitles:</span>
+                                            <span className="text-white font-mono">{job.subtitles || "Same"}</span>
+                                          </div>
+                                          <div className="flex justify-between border-t border-green-900 pt-2 mt-2">
+                                            <span className="text-gray-400 font-semibold">Size:</span>
                                             <span className="text-white font-mono font-bold">{formatSize(job.size_after)}</span>
                                           </div>
                                         </div>
@@ -2455,7 +2539,7 @@
                                       }
                                     }}
                                     className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
-                                    title="Play original file in default media player"
+                                    title="Play original file with MPV"
                                   >
                                     ▶️ Play Original
                                   </button>
@@ -2474,9 +2558,51 @@
                                       }
                                     }}
                                     className="px-3 py-1 bg-gray-600 hover:bg-gray-700 text-white text-xs rounded"
-                                    title="Play encoded file in default media player"
+                                    title="Play encoded file with MPV"
                                   >
                                     ▶️ Play Encoded
+                                  </button>
+                                )}
+
+                                {/* Compare button - both files must exist locally */}
+                                {status.localOriginal && status.localEncoded && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const result = await window.electronAPI.compareWithMPV(job.filepath);
+                                        if (!result.success) {
+                                          alert("Failed to launch MPV: " + result.error);
+                                        }
+                                      } catch (error) {
+                                        console.error("Failed to compare with MPV:", error);
+                                        alert("Failed to launch MPV: " + error.message);
+                                      }
+                                    }}
+                                    className="px-3 py-1 bg-purple-600 hover:bg-purple-700 text-white text-xs rounded"
+                                    title="Compare original (top) and encoded (bottom) with MPV"
+                                  >
+                                    🔀 Compare (MPV)
+                                  </button>
+                                )}
+
+                                {/* Vertical compare button - both files must exist locally */}
+                                {status.localOriginal && status.localEncoded && (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        const result = await window.electronAPI.compareWithMPVVertical(job.filepath);
+                                        if (!result.success) {
+                                          alert("Failed to launch MPV: " + result.error);
+                                        }
+                                      } catch (error) {
+                                        console.error("Failed to compare with MPV (vertical):", error);
+                                        alert("Failed to launch MPV: " + error.message);
+                                      }
+                                    }}
+                                    className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded"
+                                    title="Compare original (left) and encoded (right) side-by-side with MPV"
+                                  >
+                                    ⚌ Compare Vertical
                                   </button>
                                 )}
 
@@ -2837,7 +2963,7 @@
                                     }
                                   }}
                                   className="bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded text-sm transition-colors"
-                                  title="Lire le fichier encodé pour vérification"
+                                  title="Play encoded file with MPV"
                                 >
                                   ▶️ Encodé
                                 </button>
@@ -2851,7 +2977,7 @@
                                     }
                                   }}
                                   className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-sm transition-colors"
-                                  title="Lire le fichier original pour comparaison"
+                                  title="Play original file with MPV"
                                 >
                                   ▶️ Original
                                 </button>
@@ -2902,7 +3028,7 @@
                                     }
                                   }}
                                   className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded text-sm transition-colors"
-                                  title="Lire le fichier encodé local"
+                                  title="Play encoded file with MPV"
                                 >
                                   ▶️ Encodé
                                 </button>
@@ -2916,7 +3042,7 @@
                                     }
                                   }}
                                   className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-sm transition-colors"
-                                  title="Lire le fichier original local"
+                                  title="Play original file with MPV"
                                 >
                                   ▶️ Original
                                 </button>

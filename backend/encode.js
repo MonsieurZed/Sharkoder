@@ -1,3 +1,32 @@
+/**
+ * encode.js - Sharkoder Video Encoder
+ *
+ * Module: Video Encoding Engine (FFmpeg Wrapper)
+ * Author: Sharkoder Team
+ * Description: Gestionnaire d'encodage vidéo avec support GPU NVIDIA (NVENC) et CPU (x265).
+ *              Détection automatique des capacités GPU, gestion des profils d'encodage,
+ *              et extraction de métadonnées vidéo complètes.
+ * Dependencies: fluent-ffmpeg, ffprobe-static, fs-extra, events, utils
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Encodage GPU avec NVIDIA NVENC (hevc_nvenc) ou CPU avec x265
+ * - Test automatique des capacités GPU avec fallback CPU
+ * - Configuration avancée NVENC (RC modes, lookahead, B-frames, AQ, multipass)
+ * - Support 2-pass encoding pour CPU
+ * - Extraction complète de métadonnées (codec, résolution, audio, sous-titres)
+ * - Gestion du cycle de vie (start, stop, progress tracking)
+ * - Récupération après crash (ghost file cleanup)
+ * - Conservation des pistes audio et sous-titres
+ * - Events pour tracking de progression
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Ajouter support d'autres GPU (AMD VCE, Intel QSV)
+ * - Implémenter un cache pour le résultat du test GPU
+ * - Ajouter validation des paramètres avant encodage
+ * - Optimiser la détection de résolution (actuellement logs répétitifs)
+ */
+
 const ffmpeg = require("fluent-ffmpeg");
 const ffprobeStatic = require("ffprobe-static");
 const path = require("path");
@@ -6,8 +35,8 @@ const { EventEmitter } = require("events");
 const { logger, formatDuration, calculateETA, safeFileDelete } = require("./utils");
 
 // Set local ffmpeg and ffprobe paths
-const ffmpegPath = path.join(__dirname, "..", "ffmpeg", "ffmpeg.exe");
-const ffprobePath = path.join(__dirname, "..", "ffmpeg", "ffprobe.exe");
+const ffmpegPath = path.join(__dirname, "..", "exe", "ffmpeg.exe");
+const ffprobePath = path.join(__dirname, "..", "exe", "ffprobe.exe");
 
 // Use local binaries if they exist, otherwise fall back to system
 if (fs.existsSync(ffmpegPath)) {
@@ -158,6 +187,29 @@ class VideoEncoder extends EventEmitter {
       const temporalAQ = ffmpegConfig.temporal_aq;
       const aqStrength = ffmpegConfig.aq_strength;
       const multipass = ffmpegConfig.multipass;
+      const gpuLimit = ffmpegConfig.gpu_limit || 100; // Limite GPU en % (utilisé pour ajuster les paramètres, pas passé directement à FFmpeg)
+
+      // Ajuster les paramètres NVENC en fonction de la limite GPU
+      let adjustedLookahead = lookahead;
+      let adjustedBframes = bframes;
+      let adjustedMultipass = multipass;
+
+      if (gpuLimit < 100) {
+        // Réduire les paramètres gourmands en GPU si limite < 100%
+        if (gpuLimit <= 50) {
+          adjustedLookahead = Math.min(lookahead, 16); // Réduire le lookahead
+          adjustedBframes = Math.min(bframes, 2); // Réduire les B-frames
+          adjustedMultipass = "disabled"; // Désactiver multipass
+          logger.info(`⚠️ GPU limit ${gpuLimit}%: Reduced lookahead=${adjustedLookahead}, bframes=${adjustedBframes}, multipass=disabled`);
+        } else if (gpuLimit <= 75) {
+          adjustedLookahead = Math.min(lookahead, 24);
+          adjustedBframes = Math.min(bframes, 3);
+          adjustedMultipass = "qres"; // Multipass basse résolution
+          logger.info(`⚠️ GPU limit ${gpuLimit}%: Reduced lookahead=${adjustedLookahead}, bframes=${adjustedBframes}, multipass=qres`);
+        } else {
+          logger.info(`✓ GPU limit ${gpuLimit}%: Slight reduction in GPU usage`);
+        }
+      }
 
       logger.info(`[CONFIG] Profile: ${profile}, CQ: ${cq}, Preset: ${encodePreset}`);
 
@@ -195,10 +247,12 @@ class VideoEncoder extends EventEmitter {
         if (this.gpuAvailable) {
           // Use already loaded bitrate/maxrate variables (formatted above)
           logger.info(
-            `NVENC Advanced: rc=${rcMode}, bitrate=${bitrate}, maxrate=${maxrate}, lookahead=${lookahead}, bf=${bframes}, aq=${spatialAQ ? 1 : 0}/${temporalAQ ? 1 : 0}, multipass=${multipass}`
+            `NVENC Advanced: rc=${rcMode}, bitrate=${bitrate}, maxrate=${maxrate}, lookahead=${adjustedLookahead}, bf=${adjustedBframes}, aq=${spatialAQ ? 1 : 0}/${
+              temporalAQ ? 1 : 0
+            }, multipass=${adjustedMultipass}, gpu_limit=${gpuLimit}%`
           );
 
-          // NVENC encoding with advanced parameters
+          // NVENC encoding with advanced parameters (using adjusted values based on gpu_limit)
           command
             .videoCodec("hevc_nvenc")
             .addOption("-preset", encodePreset)
@@ -211,11 +265,15 @@ class VideoEncoder extends EventEmitter {
             .addOption("-spatial-aq", spatialAQ ? "1" : "0") // Spatial AQ
             .addOption("-temporal-aq", temporalAQ ? "1" : "0") // Temporal AQ
             .addOption("-aq-strength", aqStrength.toString()) // AQ strength (1-15)
-            .addOption("-bf", bframes) // B-frames (0-4)
+            .addOption("-bf", adjustedBframes.toString()) // B-frames (adjusted based on gpu_limit)
             .addOption("-b_ref_mode", bRefMode) // B-frame reference mode: disabled, each, middle
-            .addOption("-rc-lookahead", lookahead) // Lookahead frames (0-32)
-            .addOption("-multipass", multipass) // Multipass: disabled, qres, fullres
+            .addOption("-rc-lookahead", adjustedLookahead.toString()) // Lookahead frames (adjusted based on gpu_limit)
+            .addOption("-multipass", adjustedMultipass) // Multipass (adjusted based on gpu_limit)
             .addOption("-2pass", twoPass ? "1" : "0"); // Two-pass encoding
+
+          // Note: L'option -gpu sélectionne QUEL GPU utiliser (0, 1, 2...), pas le % d'utilisation
+          // Pour limiter l'utilisation GPU, il faut ajuster les paramètres NVENC (preset, lookahead, etc.)
+          // ou utiliser des outils externes comme nvidia-smi
         } else {
           // CPU encoding fallback
           command.videoCodec("libx265").addOption("-preset", cpuPreset).addOption("-crf", crf).addOption("-profile:v", profile).addOption("-x265-params", "log-level=error");

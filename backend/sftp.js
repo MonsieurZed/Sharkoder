@@ -1,3 +1,31 @@
+/**
+ * sftp.js - Sharkoder SFTP Manager
+ *
+ * Module: SFTP Transfer Protocol Implementation
+ * Author: Sharkoder Team
+ * Description: Gestionnaire de connexion et transferts SFTP avec support de reprise,
+ *              backup automatique, optimisations de performance et cache de tailles.
+ * Dependencies: ssh2-sftp-client, fs-extra, path, utils
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Connexion SFTP avec authentification clé/mot de passe
+ * - Optimisations SSH (cipher AES-GCM, keepalive, pas de compression)
+ * - Upload/Download avec reprise automatique
+ * - Backup automatique (.bak.ext) avant overwrite
+ * - Progress tracking avec speed/ETA
+ * - Cache de tailles de dossiers (.sharkoder_sizes.json)
+ * - Listing récursif et statistiques de dossier
+ * - Scan vidéo avec extraction métadonnées
+ * - Gestion d'erreurs réseau avec retry
+ * - Opérations de fichiers (rename, delete, exists)
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Extraire la fonction getBackupPath en utilitaire partagé (dupliquée dans webdav.js)
+ * - Créer une classe abstraite BaseTransferManager pour factoriser le code commun avec webdav.js
+ * - Implémenter connection pooling pour uploads/downloads parallèles
+ */
+
 const SftpClient = require("ssh2-sftp-client");
 const path = require("path");
 const fs = require("fs-extra");

@@ -1,3 +1,23 @@
+/**
+ * main.js - Sharkoder GPU Video Encoder
+ *
+ * Module: Electron Main Process
+ * Author: Sharkoder Team
+ * Description: Point d'entrée principal de l'application Electron Sharkoder.
+ *              Gère l'interface utilisateur, les communications IPC, la coordination
+ *              des managers backend et l'intégration système (tray, fenêtres).
+ * Dependencies: electron, fs-extra, path, backend modules
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Initialisation de l'application Electron
+ * - Gestion de la fenêtre principale et du system tray
+ * - Coordination des managers (Queue, Transfer, ProgressFile)
+ * - Handlers IPC pour communication renderer <-> main
+ * - Hooks de logging centralisé vers le renderer
+ * - Gestion du cycle de vie de l'application
+ */
+
 const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, dialog } = require("electron");
 const path = require("path");
 const fs = require("fs-extra");
@@ -53,8 +73,13 @@ logger.error = (...args) => sendLogToRenderer("error", ...args);
 // Initialize app directories
 const initAppDirectories = async () => {
   const config = require("./sharkoder.config.json");
-  await fs.ensureDir(config.storage.local_temp);
-  await fs.ensureDir(config.storage.local_backup);
+
+  // Support both old and new config format
+  const localTemp = config.local_temp || config.storage?.local_temp;
+  const localBackup = config.local_backup || config.storage?.local_backup;
+
+  if (localTemp) await fs.ensureDir(localTemp);
+  if (localBackup) await fs.ensureDir(localBackup);
   await fs.ensureDir("./logs");
 };
 
@@ -209,10 +234,10 @@ const setupIpcHandlers = () => {
     }
   });
 
-  ipcMain.handle("webdav:getFolderStats", async (event, remotePath) => {
+  ipcMain.handle("webdav:getFolderStats", async (event, remotePath, includeDuration = false) => {
     try {
       await transferManager.ensureConnection();
-      const stats = await transferManager.webdavManager.getFolderStats(remotePath || "/");
+      const stats = await transferManager.webdavManager.getFolderStats(remotePath || "/", includeDuration);
       return { success: true, stats };
     } catch (error) {
       logger.error("Failed to get folder stats:", error);
@@ -220,10 +245,10 @@ const setupIpcHandlers = () => {
     }
   });
 
-  ipcMain.handle("webdav:scanFolderRecursive", async (event, remotePath) => {
+  ipcMain.handle("webdav:scanFolderRecursive", async (event, remotePath, includeDuration = false) => {
     try {
       await transferManager.ensureConnection();
-      const files = await transferManager.webdavManager.scanFolderRecursive(remotePath || "/");
+      const files = await transferManager.webdavManager.scanFolderRecursive(remotePath || "/", includeDuration);
       return { success: true, files };
     } catch (error) {
       logger.error("Failed to scan folder recursively:", error);
@@ -234,8 +259,20 @@ const setupIpcHandlers = () => {
   ipcMain.handle("webdav:getFileInfo", async (event, remotePath) => {
     try {
       await transferManager.ensureConnection();
+
+      // Get basic file info (size, date)
       const fileInfo = await transferManager.webdavManager.stat(remotePath);
-      return { success: true, fileInfo };
+
+      // Get video metadata (codec, resolution, bitrate, etc.)
+      const videoInfo = await transferManager.webdavManager.getVideoInfo(remotePath);
+
+      // Merge both
+      const completeInfo = {
+        ...fileInfo,
+        ...videoInfo,
+      };
+
+      return { success: true, fileInfo: completeInfo };
     } catch (error) {
       logger.error("Failed to get file info:", error);
       return { success: false, error: error.message };
@@ -706,6 +743,7 @@ const setupIpcHandlers = () => {
   });
 
   // Play original file from local backup
+  // Play original file with MPV
   ipcMain.handle("playOriginalFile", async (event, filepath) => {
     try {
       logger.info(`[playOriginalFile] Received filepath: ${filepath}`);
@@ -720,53 +758,240 @@ const setupIpcHandlers = () => {
       const exists = await fs.pathExists(originalPath);
       logger.info(`[playOriginalFile] File exists: ${exists}`);
 
-      if (exists) {
-        const result = await shell.openPath(originalPath);
-        logger.info(`[playOriginalFile] shell.openPath result: ${result}`);
-        if (result === "") {
-          logger.info(`Opened original file from backup: ${originalPath}`);
-          return { success: true };
-        } else {
-          throw new Error(`Failed to open file: ${result}`);
-        }
-      } else {
+      if (!exists) {
         throw new Error(`Original file not found: ${originalPath}`);
       }
+
+      // Get MPV path
+      const localMpvPath = path.join(__dirname, "exe", "mpv.exe");
+      let mpvPath = config.storage?.mpv_path || config.mpv_path;
+
+      if (!mpvPath) {
+        mpvPath = (await fs.pathExists(localMpvPath)) ? localMpvPath : "mpv";
+      }
+
+      // Launch MPV
+      const { spawn } = require("child_process");
+      const mpvArgs = ["--no-config", "--osd-level=1", originalPath];
+
+      logger.info(`[playOriginalFile] Launching MPV: ${mpvPath} ${mpvArgs.join(" ")}`);
+
+      const mpvProcess = spawn(mpvPath, mpvArgs, {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      mpvProcess.unref();
+      logger.info(`Opened original file with MPV: ${originalPath}`);
+      return { success: true };
     } catch (error) {
       logger.error(`Failed to play original file: ${error.message}`, error);
       return { success: false, error: error.message };
     }
   });
 
-  // Play encoded file from local backup
+  // Play encoded file with MPV
   ipcMain.handle("playEncodedFile", async (event, filepath) => {
     try {
       logger.info(`[playEncodedFile] Received filepath: ${filepath}`);
+
+      if (!filepath) {
+        throw new Error("Filepath is required");
+      }
+
       const config = require("./sharkoder.config.json");
+
+      // Get local_backup path (support both old and new config format)
+      let localBackupPath = config.local_backup || config.storage?.local_backup;
+
+      if (!localBackupPath) {
+        throw new Error("local_backup path not configured in sharkoder.config.json");
+      }
 
       // Remove leading slash and normalize path
       const normalizedPath = filepath.replace(/^\/+/, "").replace(/\\/g, "/");
-      const encodedPath = path.join(config.local_backup, "encoded", normalizedPath);
+      const encodedPath = path.join(localBackupPath, "encoded", normalizedPath);
       logger.info(`[playEncodedFile] Checking path: ${encodedPath}`);
 
       // Check if encoded backup exists locally
       const exists = await fs.pathExists(encodedPath);
       logger.info(`[playEncodedFile] File exists: ${exists}`);
 
-      if (exists) {
-        const result = await shell.openPath(encodedPath);
-        logger.info(`[playEncodedFile] shell.openPath result: ${result}`);
-        if (result === "") {
-          logger.info(`Opened encoded file from backup: ${encodedPath}`);
-          return { success: true };
-        } else {
-          throw new Error(`Failed to open file: ${result}`);
-        }
-      } else {
+      if (!exists) {
         throw new Error(`Encoded file not found: ${encodedPath}`);
       }
+
+      // Get MPV path
+      const localMpvPath = path.join(__dirname, "exe", "mpv.exe");
+      let mpvPath = config.storage?.mpv_path || config.mpv_path;
+
+      if (!mpvPath) {
+        mpvPath = (await fs.pathExists(localMpvPath)) ? localMpvPath : "mpv";
+      }
+
+      // Launch MPV
+      const { spawn } = require("child_process");
+      const mpvArgs = ["--no-config", "--osd-level=1", encodedPath];
+
+      logger.info(`[playEncodedFile] Launching MPV: ${mpvPath} ${mpvArgs.join(" ")}`);
+
+      const mpvProcess = spawn(mpvPath, mpvArgs, {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      mpvProcess.unref();
+      logger.info(`Opened encoded file with MPV: ${encodedPath}`);
+      return { success: true };
     } catch (error) {
       logger.error(`Failed to play encoded file: ${error.message}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Compare original and encoded files with MPV (side by side)
+  ipcMain.handle("compareWithMPV", async (event, filepath) => {
+    try {
+      logger.info(`[compareWithMPV] Received filepath: ${filepath}`);
+
+      if (!filepath) {
+        throw new Error("Filepath is required");
+      }
+
+      const config = require("./sharkoder.config.json");
+
+      // Get local_backup path
+      let localBackupPath = config.local_backup || config.storage?.local_backup;
+
+      if (!localBackupPath) {
+        throw new Error("local_backup path not configured");
+      }
+
+      // Normalize path
+      const normalizedPath = filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+      const originalPath = path.join(localBackupPath, "originals", normalizedPath);
+      const encodedPath = path.join(localBackupPath, "encoded", normalizedPath);
+
+      // Check if both files exist
+      const originalExists = await fs.pathExists(originalPath);
+      const encodedExists = await fs.pathExists(encodedPath);
+
+      if (!originalExists) {
+        throw new Error(`Original file not found: ${originalPath}`);
+      }
+
+      if (!encodedExists) {
+        throw new Error(`Encoded file not found: ${encodedPath}`);
+      }
+
+      // Get MPV path from config or check local exe folder
+      const localMpvPath = path.join(__dirname, "exe", "mpv.exe");
+      let mpvPath = config.storage?.mpv_path || config.mpv_path;
+
+      // If no config path, try local exe folder first, then fallback to system mpv
+      if (!mpvPath) {
+        mpvPath = (await fs.pathExists(localMpvPath)) ? localMpvPath : "mpv";
+        logger.info(`[compareWithMPV] Using MPV from: ${mpvPath}`);
+      }
+
+      // Launch MPV with lavfi-complex to display both videos
+      const { spawn } = require("child_process");
+
+      // MPV command: Split-screen comparison with separator line
+      // Top half = Original, Bottom half = Encoded
+      // Adds a black line between the two halves
+      const mpvArgs = [
+        "--lavfi-complex=[vid1]crop=iw:ih/2:0:0[top];[vid2]crop=iw:ih/2:0:ih/2[bottom];[top][bottom]vstack[stacked];[stacked]drawbox=x=0:y=ih/2-1:w=iw:h=2:color=black:t=fill[vo]",
+        `--external-file=${encodedPath}`,
+        "--no-config",
+        "--osd-level=1",
+        "--osd-msg1=Top: Original | Bottom: Encoded",
+        originalPath,
+      ];
+
+      logger.info(`[compareWithMPV] Launching MPV: ${mpvPath} ${mpvArgs.join(" ")}`);
+
+      const mpvProcess = spawn(mpvPath, mpvArgs, {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      mpvProcess.unref();
+
+      logger.info(`[compareWithMPV] MPV launched successfully`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to compare with MPV: ${error.message}`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Compare original and encoded files with MPV (side by side / vertical split)
+  ipcMain.handle("compareWithMPVVertical", async (event, filepath) => {
+    try {
+      logger.info(`[compareWithMPVVertical] Starting comparison for: ${filepath}`);
+
+      const config = require("./sharkoder.config.json");
+      let localBackupPath = config.local_backup || config.storage?.local_backup;
+
+      if (!localBackupPath) {
+        throw new Error("local_backup path not configured");
+      }
+
+      // Normalize path
+      const normalizedPath = filepath.replace(/^\/+/, "").replace(/\\/g, "/");
+      const originalPath = path.join(localBackupPath, "originals", normalizedPath);
+      const encodedPath = path.join(localBackupPath, "encoded", normalizedPath);
+
+      // Check if both files exist
+      const originalExists = await fs.pathExists(originalPath);
+      const encodedExists = await fs.pathExists(encodedPath);
+
+      if (!originalExists) {
+        throw new Error(`Original file not found: ${originalPath}`);
+      }
+
+      if (!encodedExists) {
+        throw new Error(`Encoded file not found: ${encodedPath}`);
+      }
+
+      // Get MPV path from config or check local exe folder
+      const localMpvPath = path.join(__dirname, "exe", "mpv.exe");
+      let mpvPath = config.storage?.mpv_path || config.mpv_path;
+
+      if (!mpvPath) {
+        mpvPath = (await fs.pathExists(localMpvPath)) ? localMpvPath : "mpv";
+        logger.info(`[compareWithMPVVertical] Using MPV from: ${mpvPath}`);
+      }
+
+      // Launch MPV with lavfi-complex to display both videos side by side
+      const { spawn } = require("child_process");
+
+      // MPV command: Side-by-side comparison with separator line
+      // Left half = Original, Right half = Encoded
+      // Adds a black vertical line between the two halves
+      const mpvArgs = [
+        "--lavfi-complex=[vid1]crop=iw/2:ih:0:0[left];[vid2]crop=iw/2:ih:iw/2:0[right];[left][right]hstack[stacked];[stacked]drawbox=x=iw/2-1:y=0:w=2:h=ih:color=black:t=fill[vo]",
+        `--external-file=${encodedPath}`,
+        "--no-config",
+        "--osd-level=1",
+        "--osd-msg1=Left: Original | Right: Encoded",
+        originalPath,
+      ];
+
+      logger.info(`[compareWithMPVVertical] Launching MPV: ${mpvPath} ${mpvArgs.join(" ")}`);
+
+      const mpvProcess = spawn(mpvPath, mpvArgs, {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      mpvProcess.unref();
+
+      logger.info(`[compareWithMPVVertical] MPV launched successfully`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to compare with MPV (vertical): ${error.message}`, error);
       return { success: false, error: error.message };
     }
   });
@@ -1059,7 +1284,8 @@ const setupIpcHandlers = () => {
       // Calculate stats for each folder
       for (const folder of folders) {
         try {
-          const stats = await transferManager.webdavManager.getFolderStats(folder.path);
+          const includeDuration = configManager.get("remote.extract_video_duration") || false;
+          const stats = await transferManager.webdavManager.getFolderStats(folder.path, includeDuration);
           cache[folder.path] = {
             ...stats,
             lastModified: new Date().toISOString(),

@@ -1,3 +1,28 @@
+/**
+ * transfer.js - Sharkoder Unified Transfer Manager
+ *
+ * Module: Unified Transfer Protocol Manager
+ * Author: Sharkoder Team
+ * Description: Gestionnaire unifié de transferts avec support SFTP, WebDAV et mode Auto.
+ *              Choisit automatiquement le meilleur protocole selon l'opération,
+ *              gère le fallback automatique et détecte les limitations (WebDAV read-only).
+ * Dependencies: SftpManager, WebDAVManager, utils (logger)
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Support SFTP, WebDAV ou Auto mode
+ * - Sélection intelligente du protocole (WebDAV pour listing/download, SFTP pour upload)
+ * - Fallback automatique en cas d'échec
+ * - Détection WebDAV read-only (403) avec switch automatique vers SFTP
+ * - Délégation transparente aux managers sous-jacents
+ * - Statistiques de connexion et status
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Ajouter un système de métriques pour optimiser le choix du protocole
+ * - Implémenter un cache des capacités serveur (upload, delete, rename)
+ * - Ajouter support d'autres protocoles (FTP, S3)
+ */
+
 const { SftpManager } = require("./sftp");
 const { WebDAVManager } = require("./webdav");
 const { logger } = require("./utils");

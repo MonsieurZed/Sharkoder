@@ -28,6 +28,10 @@ pids
 *.pid.lock
 
 # Database
+db/*.db
+db/*.db-journal
+db/*.db-shm
+db/*.db-wal
 *.db
 *.db-journal
 jobs.db

@@ -1,3 +1,31 @@
+/**
+ * utils.js - Sharkoder Utility Functions
+ *
+ * Module: Shared Utility Library
+ * Author: Sharkoder Team
+ * Description: Collection centralisée d'utilitaires réutilisables pour logging, manipulation
+ *              de fichiers, calculs, formatage et gestion d'erreurs. Utilisé par tous les modules.
+ * Dependencies: fs-extra, path, crypto, util
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Logger centralisé avec niveaux (info, warn, error, debug) et fichier de log
+ * - Formatage de tailles de fichiers et durées
+ * - Gestion d'espace disque et validation
+ * - Calcul de hash MD5 pour fichiers
+ * - Utilitaires de chemin et fichier (isVideoFile, sanitizeFilename, etc.)
+ * - Calcul ETA pour progression
+ * - Retry logic avec backoff exponentiel
+ * - Safe file operations (move, delete) avec retry sur verrous
+ * - Validation de configuration
+ * - Détection d'erreurs réseau
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Ajouter rotation des logs par taille/date
+ * - Implémenter vérification réelle d'espace disque (actuellement placeholder)
+ * - Ajouter support de hash SHA256 en plus de MD5
+ */
+
 const fs = require("fs-extra");
 const path = require("path");
 const crypto = require("crypto");

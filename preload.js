@@ -1,3 +1,21 @@
+/**
+ * preload.js - Sharkoder Electron Preload Script
+ *
+ * Module: Electron Preload Bridge
+ * Author: Sharkoder Team
+ * Description: Script de pont sécurisé entre le process renderer et le process main.
+ *              Expose une API contrôlée via contextBridge pour permettre au renderer
+ *              d'accéder aux fonctionnalités IPC sans exposer directement Node.js.
+ * Dependencies: electron (contextBridge, ipcRenderer)
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Exposition sécurisée de l'API electronAPI au renderer
+ * - Handlers pour WebDAV, SFTP, Queue, Config, System operations
+ * - Gestion des événements et callbacks bidirectionnels
+ * - Isolation de sécurité entre renderer et main process
+ */
+
 const { contextBridge, ipcRenderer } = require("electron");
 
 // Expose protected methods that allow the renderer process to use
@@ -72,6 +90,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   playFile: (remotePath) => ipcRenderer.invoke("playFile", remotePath),
   playOriginalFile: (filename) => ipcRenderer.invoke("playOriginalFile", filename),
   playEncodedFile: (filename) => ipcRenderer.invoke("playEncodedFile", filename),
+  compareWithMPV: (filename) => ipcRenderer.invoke("compareWithMPV", filename),
+  compareWithMPVVertical: (filename) => ipcRenderer.invoke("compareWithMPVVertical", filename),
 
   // Backup and restore operations
   restoreFromLocal: (jobId, type) => ipcRenderer.invoke("restore:fromLocal", jobId, type),

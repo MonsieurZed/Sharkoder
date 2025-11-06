@@ -10,6 +10,8 @@
     "_comment_gpu": "GPU Settings - NVIDIA NVENC Hardware Acceleration",
     "gpu_enabled": true,
     "force_gpu": false,
+    "gpu_limit": 100,
+    "_gpu_limit_info": "GPU usage limit in % (0-100, 100 = max usage, lower values reduce GPU load)",
 
     "_comment_nvenc": "NVENC Settings (GPU encoding)",
     "encode_preset": "p7",
@@ -58,6 +60,8 @@
   "remote": {
     "transfer_method": "auto",
     "_transfer_methods": "auto (try WebDAV first, fallback to SFTP), webdav, sftp",
+    "extract_video_duration": false,
+    "_extract_duration_info": "Extract video duration during statistics (slower, requires partial downloads)",
 
     "_comment_sftp": "SFTP Connection Settings",
     "sftp": {
@@ -86,7 +90,9 @@
     "local_backup": "C:\\Users\\YourName\\AppData\\Local\\Sharkoder\\backup",
     "_local_backup_info": "Local backups of original and encoded files for comparison",
     "default_download_path": "C:\\Users\\YourName\\Downloads",
-    "_download_path_info": "Where files are downloaded when using the download button"
+    "_download_path_info": "Where files are downloaded when using the download button",
+    "mpv_path": "mpv",
+    "_mpv_path_info": "Path to MPV player executable (leave as 'mpv' if in PATH, or full path like 'C:\\Program Files\\mpv\\mpv.exe')"
   },
 
   "_comment_advanced": "===== ADVANCED SETTINGS =====",

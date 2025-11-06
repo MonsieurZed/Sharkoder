@@ -1,9 +1,33 @@
+/**
+ * db.js - Sharkoder Database Manager
+ *
+ * Module: SQLite Database Operations
+ * Author: Sharkoder Team
+ * Description: Gestionnaire de base de données SQLite (sql.js) pour la persistance des jobs.
+ *              Gère la création, mise à jour, et requêtes sur les jobs d'encodage avec
+ *              sauvegarde périodique et migrations de schéma automatiques.
+ * Dependencies: sql.js, fs, path, utils (logger)
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Initialisation et création de tables SQLite
+ * - Migrations automatiques de colonnes (ALTER TABLE try/catch pattern)
+ * - CRUD complet sur les jobs d'encodage
+ * - Statistiques et filtres par statut
+ * - Sauvegarde automatique de la base en fichier
+ * - Gestion des états de jobs (waiting, downloading, encoding, uploading, completed, failed)
+ *
+ * AMÉLIORATION RECOMMANDÉE:
+ * - Refactoriser les migrations en système de versions pour éviter les try/catch répétitifs
+ * - Créer un système de migrations avec numéros de version dans une table dédiée
+ */
+
 const initSQL = require("sql.js");
 const fs = require("fs");
 const path = require("path");
 const { logger } = require("./utils");
 
-const DB_PATH = path.join(__dirname, "..", "jobs.db");
+const DB_PATH = path.join(__dirname, "..", "db", "jobs.db");
 
 let db;
 let SQL;

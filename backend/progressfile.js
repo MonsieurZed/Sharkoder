@@ -1,3 +1,32 @@
+/**
+ * progressfile.js - Sharkoder Progress File Manager
+ *
+ * Module: Encoding Progress Tracking System
+ * Author: Sharkoder Team
+ * Description: Gestionnaire de fichier de progression d'encodage (.sharkoder_progress.json).
+ *              Maintient un historique persistant des fichiers encodés avec statistiques,
+ *              synchronisé entre local et serveur SFTP/WebDAV.
+ * Dependencies: fs-extra, path, utils (logger, safeJSONParse)
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Fichier de progression JSON partagé (.sharkoder_progress.json)
+ * - Suivi des jobs encodés (codec, tailles, durée, preset)
+ * - Cache local pour accès rapide
+ * - Map en mémoire des fichiers encodés pour lookup O(1)
+ * - Upload atomique avec fichier temporaire + rename
+ * - Statistiques (espace économisé, ratio compression, temps total)
+ * - Import/Export de progression
+ * - Cleanup automatique des vieilles entrées
+ * - Vérification d'existence (isFileEncoded)
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Implémenter un système de lock pour éviter les conflits multi-instances
+ * - Ajouter versioning du format de fichier pour migrations futures
+ * - Optimiser la taille du fichier (compression, rotation par période)
+ * - Ajouter validation de l'intégrité du fichier (checksum)
+ */
+
 const fs = require("fs-extra");
 const path = require("path");
 const { logger, safeJSONParse } = require("./utils");

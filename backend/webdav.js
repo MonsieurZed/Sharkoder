@@ -1,3 +1,37 @@
+/**
+ * webdav.js - Sharkoder WebDAV Manager
+ *
+ * Module: WebDAV Transfer Protocol Implementation
+ * Author: Sharkoder Team
+ * Description: Gestionnaire de connexion et transferts WebDAV avec support de backup automatique,
+ *              gestion des uploads partiels, et optimisations de performance. Compatible avec
+ *              les serveurs WebDAV standard (Nextcloud, ownCloud, etc.).
+ * Dependencies: webdav (ES module), fs-extra, path, utils
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Connexion WebDAV avec auto-détection authentification (Basic, Digest, None)
+ * - Upload/Download avec progress tracking
+ * - Backup automatique (.bak.ext) avant overwrite
+ * - Gestion des uploads partiels avec cleanup
+ * - Listing et statistiques de dossiers
+ * - Scan récursif de vidéos
+ * - Opérations de fichiers (rename, delete, exists, stat)
+ * - Progress tracking avec speed/ETA
+ * - Support des buffers volumineux pour performance
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Extraire getBackupPath en utilitaire partagé (dupliquée dans sftp.js)
+ * - Créer une classe abstraite BaseTransferManager pour factoriser le code commun avec sftp.js
+ * - Ajouter support de reprise d'upload (actuellement désactivé pour compatibilité)
+ * - Implémenter retry sur échec de connexion
+ *
+ * CODE DUPLIQUÉ DÉTECTÉ:
+ * - getBackupPath() : identique à sftp.js - à extraire dans utils.js
+ * - Logique de progress tracking : similaire à sftp.js - peut être factorisée
+ * - Pattern de backup avant upload : identique à sftp.js - peut être centralisé
+ */
+
 const path = require("path");
 const fs = require("fs-extra");
 const { logger, formatBytes, isVideoFile } = require("./utils");
@@ -521,6 +555,78 @@ class WebDAVManager {
   }
 
   /**
+   * Get video codec and metadata information using ffprobe
+   * Extracts: codec, container, resolution, duration, bitrate, audio tracks, audio codec, subtitles
+   * @param {string} remotePath - Relative path from webdav root
+   * @returns {Promise<Object>} Video metadata or null if failed
+   */
+  async getVideoInfo(remotePath) {
+    try {
+      const ffmpeg = require("fluent-ffmpeg");
+      const ffprobeStatic = require("ffprobe-static");
+
+      // Setup ffprobe path
+      const localFfprobePath = path.join(__dirname, "..", "exe", "ffprobe.exe");
+      const ffprobePath = fs.existsSync(localFfprobePath) ? localFfprobePath : ffprobeStatic.path;
+      ffmpeg.setFfprobePath(ffprobePath);
+
+      const fullPath = path.posix.join(this.config.remote.webdav.path || "/", remotePath);
+      const webdavUrl = this.config.remote.webdav.url;
+      const webdavUser = this.config.remote.webdav.username || this.config.remote.webdav.usernamename;
+      const webdavPass = this.config.remote.webdav.password;
+
+      // Build WebDAV URL with auth
+      const url = new URL(webdavUrl);
+      const fileUrl = `${url.protocol}//${webdavUser}:${webdavPass}@${url.host}${fullPath}`;
+
+      return new Promise((resolve, reject) => {
+        ffmpeg.ffprobe(fileUrl, (err, metadata) => {
+          if (err) {
+            logger.warn(`Could not get video info for ${remotePath}:`, err.message);
+            resolve(null);
+            return;
+          }
+
+          const videoStream = metadata.streams.find((s) => s.codec_type === "video");
+          const audioStreams = metadata.streams.filter((s) => s.codec_type === "audio");
+          const subtitleStreams = metadata.streams.filter((s) => s.codec_type === "subtitle");
+
+          // Get resolution
+          let resolution = null;
+          if (videoStream?.height) {
+            if (videoStream.height >= 2160) resolution = "4K";
+            else if (videoStream.height >= 1440) resolution = "1440p";
+            else if (videoStream.height >= 1080) resolution = "1080p";
+            else if (videoStream.height >= 720) resolution = "720p";
+            else if (videoStream.height >= 480) resolution = "480p";
+            else resolution = `${videoStream.height}p`;
+          }
+
+          // Get audio codec from first audio stream
+          const audioCodec = audioStreams[0]?.codec_name || null;
+
+          // Get container format
+          const container = metadata.format.format_name?.split(",")[0] || null;
+
+          resolve({
+            codec: videoStream?.codec_name || "unknown",
+            audio: audioStreams.length,
+            subtitles: subtitleStreams.length,
+            duration: metadata.format.duration || 0,
+            bitrate: metadata.format.bit_rate || 0,
+            resolution: resolution,
+            audioCodec: audioCodec,
+            container: container,
+          });
+        });
+      });
+    } catch (error) {
+      logger.warn(`Failed to get video info:`, error.message);
+      return null;
+    }
+  }
+
+  /**
    * Retry a function with exponential backoff
    */
   async retryWithBackoff(fn, maxRetries = 3, initialDelay = 1000) {
@@ -546,17 +652,97 @@ class WebDAVManager {
   }
 
   /**
+   * Extract video duration from a remote video file by downloading only the first 10MB
+   * Uses FFprobe to analyze the partial file and extract metadata
+   * @param {string} remoteFilePath - Full remote path to the video file
+   * @returns {Promise<number>} Duration in seconds (0 if extraction fails)
+   */
+  async getVideoDuration(remoteFilePath) {
+    const fs = require("fs-extra");
+    const os = require("os");
+    const { VideoEncoder } = require("./encode");
+
+    let tempFile = null;
+
+    try {
+      // Create temporary file path
+      const tempFileName = `webdav_probe_${Date.now()}_${path.basename(remoteFilePath)}`;
+      tempFile = path.join(os.tmpdir(), tempFileName);
+
+      // Download only first 10MB to extract metadata (enough for video headers)
+      const PROBE_SIZE = 10 * 1024 * 1024; // 10 MB
+      logger.debug(`Downloading first ${PROBE_SIZE} bytes of ${remoteFilePath} for duration extraction`);
+
+      const readStream = this.client.createReadStream(remoteFilePath, {
+        range: { start: 0, end: PROBE_SIZE - 1 },
+      });
+
+      const writeStream = fs.createWriteStream(tempFile);
+
+      await new Promise((resolve, reject) => {
+        readStream.pipe(writeStream);
+        writeStream.on("finish", resolve);
+        writeStream.on("error", reject);
+        readStream.on("error", reject);
+      });
+
+      // Use VideoEncoder to probe the partial file
+      const encoder = new VideoEncoder();
+      const videoInfo = await encoder.getVideoInfo(tempFile);
+
+      return videoInfo.duration || 0;
+    } catch (error) {
+      logger.debug(`Failed to extract duration from ${remoteFilePath}:`, error.message);
+      return 0;
+    } finally {
+      // Cleanup temporary file
+      if (tempFile) {
+        try {
+          await fs.remove(tempFile);
+        } catch (cleanupError) {
+          logger.debug(`Failed to cleanup temp file ${tempFile}:`, cleanupError.message);
+        }
+      }
+    }
+  }
+
+  /**
+   * Format duration in seconds to human-readable format (HH:MM:SS or MM:SS)
+   * @param {number} seconds - Duration in seconds
+   * @returns {string} Formatted duration string
+   */
+  formatDuration(seconds) {
+    if (!seconds || seconds <= 0) return "00:00";
+
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+      return `${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    } else {
+      return `${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    }
+  }
+
+  /**
    * Get folder statistics (size, file count, avg file size)
    * Recursively scans the folder
    */
-  async getFolderStats(remotePath = "/") {
+  /**
+   * Get folder statistics including total size, file count, video count, and optionally total video duration
+   * @param {string} remotePath - Remote folder path
+   * @param {boolean} includeDuration - Whether to extract video durations (slower, requires partial downloads)
+   * @returns {Promise<Object>} Statistics object with size, counts, and optional duration
+   */
+  async getFolderStats(remotePath = "/", includeDuration = false) {
     await this.ensureConnection();
 
     try {
       const basePath = this.config.remote.webdav.path || "/";
       const fullPath = remotePath === "/" ? basePath : path.posix.join(basePath, remotePath);
 
-      logger.debug(`Calculating folder stats for: ${fullPath}`);
+      logger.debug(`Calculating folder stats for: ${fullPath} (includeDuration: ${includeDuration})`);
 
       let failedDirs = [];
       const MAX_PARALLEL = 20;
@@ -564,18 +750,20 @@ class WebDAVManager {
       const scanDirectory = async (dirPath, depth = 0) => {
         if (depth > 20) {
           logger.warn(`Maximum depth reached for ${dirPath}, skipping`);
-          return { totalSize: 0, fileCount: 0, videoCount: 0 };
+          return { totalSize: 0, fileCount: 0, videoCount: 0, totalDuration: 0 };
         }
 
         let localTotalSize = 0;
         let localFileCount = 0;
         let localVideoCount = 0;
+        let localTotalDuration = 0;
 
         try {
           const contents = await this.retryWithBackoff(() => this.client.getDirectoryContents(dirPath, { details: true }), 2, 500);
 
           const contentsArray = Array.isArray(contents) ? contents : contents.data || [];
           const subDirectories = [];
+          const videoFiles = [];
 
           for (const item of contentsArray) {
             const itemName = path.basename(item.filename);
@@ -588,6 +776,24 @@ class WebDAVManager {
               localTotalSize += item.size || 0;
               if (require("./utils").isVideoFile(itemName)) {
                 localVideoCount++;
+                if (includeDuration) {
+                  videoFiles.push({ filename: item.filename, name: itemName });
+                }
+              }
+            }
+          }
+
+          // Extract video durations if requested
+          if (includeDuration && videoFiles.length > 0) {
+            for (const videoFile of videoFiles) {
+              try {
+                const duration = await this.getVideoDuration(videoFile.filename);
+                if (duration > 0) {
+                  localTotalDuration += duration;
+                  logger.debug(`Video ${videoFile.name}: ${duration.toFixed(2)}s`);
+                }
+              } catch (error) {
+                logger.warn(`Failed to get duration for ${videoFile.name}:`, error.message);
               }
             }
           }
@@ -600,7 +806,7 @@ class WebDAVManager {
                   scanDirectory(subDir, depth + 1).catch((error) => {
                     failedDirs.push(subDir);
                     logger.warn(`Could not scan directory ${subDir}:`, error.message);
-                    return { totalSize: 0, fileCount: 0, videoCount: 0 };
+                    return { totalSize: 0, fileCount: 0, videoCount: 0, totalDuration: 0 };
                   })
                 )
               );
@@ -609,6 +815,7 @@ class WebDAVManager {
                 localTotalSize += result.totalSize;
                 localFileCount += result.fileCount;
                 localVideoCount += result.videoCount;
+                localTotalDuration += result.totalDuration;
               }
             }
           }
@@ -617,7 +824,7 @@ class WebDAVManager {
           logger.warn(`Could not scan directory ${dirPath}:`, error.message);
         }
 
-        return { totalSize: localTotalSize, fileCount: localFileCount, videoCount: localVideoCount };
+        return { totalSize: localTotalSize, fileCount: localFileCount, videoCount: localVideoCount, totalDuration: localTotalDuration };
       };
 
       const result = await scanDirectory(fullPath);
@@ -633,7 +840,19 @@ class WebDAVManager {
         failedDirs: failedDirs.length > 0 ? failedDirs : undefined,
       };
 
-      logger.debug(`Folder stats for ${remotePath}: ${result.fileCount} files, ${result.videoCount} videos, ${formatBytes(result.totalSize)} total`);
+      // Add duration information if requested
+      if (includeDuration) {
+        stats.totalDuration = result.totalDuration;
+        stats.totalDurationFormatted = this.formatDuration(result.totalDuration);
+        stats.avgDuration = result.videoCount > 0 ? result.totalDuration / result.videoCount : 0;
+        stats.avgDurationFormatted = this.formatDuration(stats.avgDuration);
+      }
+
+      logger.debug(
+        `Folder stats for ${remotePath}: ${result.fileCount} files, ${result.videoCount} videos, ${formatBytes(result.totalSize)} total${
+          includeDuration ? `, ${stats.totalDurationFormatted} duration` : ""
+        }`
+      );
 
       return stats;
     } catch (error) {
@@ -643,16 +862,19 @@ class WebDAVManager {
   }
 
   /**
-   * Scan folder recursively and get all video files
+   * Scan folder recursively and get all video files with optional duration extraction
+   * @param {string} remotePath - Remote folder path to scan
+   * @param {boolean} includeDuration - Whether to extract video durations (slower, requires partial downloads)
+   * @returns {Promise<Array>} Array of video file objects with metadata
    */
-  async scanFolderRecursive(remotePath = "/") {
+  async scanFolderRecursive(remotePath = "/", includeDuration = false) {
     await this.ensureConnection();
 
     try {
       const basePath = this.config.remote.webdav.path || "/";
       const fullPath = remotePath === "/" ? basePath : path.posix.join(basePath, remotePath);
 
-      logger.info(`Scanning folder recursively: ${fullPath}`);
+      logger.info(`Scanning folder recursively: ${fullPath} (includeDuration: ${includeDuration})`);
 
       const videoFiles = [];
       let failedDirs = [];
@@ -677,14 +899,29 @@ class WebDAVManager {
             if (item.type === "directory") {
               await scanDirectory(item.filename, itemRelativePath, depth + 1);
             } else if (require("./utils").isVideoFile(itemName)) {
-              videoFiles.push({
+              const videoFile = {
                 name: itemName,
                 path: itemRelativePath,
                 fullPath: item.filename,
                 size: item.size || 0,
                 modified: item.lastmod,
                 isVideo: true,
-              });
+              };
+
+              // Extract duration if requested
+              if (includeDuration) {
+                try {
+                  const duration = await this.getVideoDuration(item.filename);
+                  videoFile.duration = duration;
+                  videoFile.durationFormatted = this.formatDuration(duration);
+                } catch (error) {
+                  logger.warn(`Failed to get duration for ${itemName}:`, error.message);
+                  videoFile.duration = 0;
+                  videoFile.durationFormatted = "00:00";
+                }
+              }
+
+              videoFiles.push(videoFile);
             }
           }
         } catch (error) {

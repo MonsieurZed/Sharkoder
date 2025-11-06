@@ -1,3 +1,29 @@
+/**
+ * queue.js - Sharkoder Queue Manager
+ *
+ * Module: Job Queue and Pipeline Orchestration
+ * Author: Sharkoder Team
+ * Description: Gestionnaire de file d'attente pour l'encodage vidéo avec pipeline 3-étapes.
+ *              Orchestre le téléchargement, l'encodage et l'upload de manière concurrente
+ *              avec gestion d'état, retry automatique, et pause/resume.
+ * Dependencies: events, path, fs-extra, VideoEncoder, db, utils, TransferManager
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Pipeline 3 étapes: Download → Encode → Upload (1 download + 1 encode + 1 upload simultanés)
+ * - Gestion d'état des jobs (waiting, downloading, encoding, uploading, completed, failed)
+ * - Retry automatique avec compteur et délais exponentiels
+ * - Gestion des backups (local originals, local encoded, server backup)
+ * - Récupération après crash (ghost file cleanup)
+ * - Events pour synchronisation UI (progress, statusChange, jobComplete, etc.)
+ * - Throttling des mises à jour DB pour éviter les conflits de lock
+ *
+ * AMÉLIORATIONS RECOMMANDÉES:
+ * - Extraire la logique de backup dans un module séparé (BackupManager)
+ * - Simplifier la machine à états avec un FSM (Finite State Machine) explicite
+ * - Réduire la taille du fichier en décomposant en sous-modules (download, encode, upload handlers)
+ */
+
 const { EventEmitter } = require("events");
 const path = require("path");
 const fs = require("fs-extra");

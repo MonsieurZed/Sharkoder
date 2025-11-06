@@ -1,3 +1,22 @@
+/**
+ * config.js - Sharkoder Configuration Manager
+ *
+ * Module: Configuration Management
+ * Author: Sharkoder Team
+ * Description: Gestionnaire centralisé de configuration avec support de watchers,
+ *              validation, rechargement en temps réel et structure par défaut.
+ *              Utilise un pattern singleton pour assurer l'unicité.
+ * Dependencies: fs, path, utils (logger)
+ * Created: 2024
+ *
+ * Fonctionnalités principales:
+ * - Chargement/sauvegarde de configuration JSON
+ * - Système de watchers pour notifications de changements
+ * - Accès par chemin de clés (ex: 'ffmpeg.gpu_enabled')
+ * - Configuration par défaut avec structure complète
+ * - Validation et gestion d'erreurs
+ */
+
 const fs = require("fs");
 const path = require("path");
 const logger = require("./utils").logger;
@@ -136,6 +155,7 @@ class ConfigManager {
       ffmpeg: {
         gpu_enabled: true,
         force_gpu: false,
+        gpu_limit: 100, // Limite d'utilisation GPU en % (0-100, 100 = utilisation maximale)
         encode_preset: "p7",
         cq: 24,
         rc_mode: "vbr_hq",
@@ -158,6 +178,7 @@ class ConfigManager {
       },
       remote: {
         transfer_method: "auto",
+        extract_video_duration: false, // Extract video duration during remote statistics (slower)
         sftp: {
           host: "",
           user: "",

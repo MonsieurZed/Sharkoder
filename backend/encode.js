@@ -126,31 +126,40 @@ class VideoEncoder extends EventEmitter {
       // Force reload user config to get latest settings
       await this.reloadConfig();
 
-      // Get encoding settings from user config or fallback to base config
+      // Get encoding settings from user config
       const ffmpegConfig = this.userConfig?.ffmpeg || {};
-      const encodePreset = ffmpegConfig.encode_preset || this.config.encode_preset || "p7";
-      const cq = ffmpegConfig.cq || this.config.cq || 18;
-      const cpuPreset = ffmpegConfig.cpu_preset || this.config.cpu_preset || "medium";
-      const crf = ffmpegConfig.crf || this.config.crf || 23;
-      const audioCodec = ffmpegConfig.audio_codec || "copy";
-      const audioBitrate = ffmpegConfig.audio_bitrate || 128;
-      const twoPass = ffmpegConfig.two_pass || false;
-      const profile = ffmpegConfig.profile || this.config.profile || "main10";
-      const forceGPU = ffmpegConfig.force_gpu || false;
 
-      // Load advanced NVENC settings (we'll need them later)
-      const rcMode = ffmpegConfig.rc_mode || this.config.ffmpeg?.rc_mode || "vbr_hq";
-      const bitrate = ffmpegConfig.bitrate || this.config.ffmpeg?.bitrate || "3M";
-      const maxrate = ffmpegConfig.maxrate || this.config.ffmpeg?.maxrate || "6M";
-      const lookahead = ffmpegConfig.lookahead !== undefined ? ffmpegConfig.lookahead : this.config.ffmpeg?.lookahead || 32;
-      const bframes = ffmpegConfig.bframes !== undefined ? ffmpegConfig.bframes : this.config.ffmpeg?.bframes || 3;
-      const bRefMode = ffmpegConfig.b_ref_mode || this.config.ffmpeg?.b_ref_mode || "middle";
-      const spatialAQ = ffmpegConfig.spatial_aq !== false && this.config.ffmpeg?.spatial_aq !== false;
-      const temporalAQ = ffmpegConfig.temporal_aq !== false && this.config.ffmpeg?.temporal_aq !== false;
-      const aqStrength = ffmpegConfig.aq_strength || this.config.ffmpeg?.aq_strength || 8;
-      const multipass = ffmpegConfig.multipass || this.config.ffmpeg?.multipass || "fullres";
+      // Helper function to format bitrate for FFmpeg
+      const formatBitrate = (value) => {
+        if (typeof value === "number") return `${value}M`;
+        if (typeof value === "string" && !value.includes("M") && !value.includes("k")) return `${value}M`;
+        return value;
+      };
 
-      logger.info(`[CONFIG] Profile from userConfig: ${ffmpegConfig.profile}, from baseConfig: ${this.config.profile}, final: ${profile}`);
+      // Basic encoding settings
+      const encodePreset = ffmpegConfig.encode_preset;
+      const cq = ffmpegConfig.cq;
+      const cpuPreset = ffmpegConfig.cpu_preset;
+      const crf = ffmpegConfig.crf;
+      const audioCodec = ffmpegConfig.audio_codec;
+      const audioBitrate = ffmpegConfig.audio_bitrate;
+      const twoPass = ffmpegConfig.two_pass;
+      const profile = ffmpegConfig.profile;
+      const forceGPU = ffmpegConfig.force_gpu;
+
+      // Advanced NVENC settings
+      const rcMode = ffmpegConfig.rc_mode;
+      const bitrate = formatBitrate(ffmpegConfig.bitrate);
+      const maxrate = formatBitrate(ffmpegConfig.maxrate);
+      const lookahead = ffmpegConfig.lookahead;
+      const bframes = ffmpegConfig.bframes;
+      const bRefMode = ffmpegConfig.b_ref_mode;
+      const spatialAQ = ffmpegConfig.spatial_aq;
+      const temporalAQ = ffmpegConfig.temporal_aq;
+      const aqStrength = ffmpegConfig.aq_strength;
+      const multipass = ffmpegConfig.multipass;
+
+      logger.info(`[CONFIG] Profile: ${profile}, CQ: ${cq}, Preset: ${encodePreset}`);
 
       // Test GPU availability if not tested yet
       if (this.gpuAvailable === null) {
@@ -184,18 +193,7 @@ class VideoEncoder extends EventEmitter {
 
         // Configure encoding based on GPU availability
         if (this.gpuAvailable) {
-          // Load advanced NVENC settings from config (use userConfig first, then fallback to base config)
-          const rcMode = ffmpegConfig.rc_mode || this.config.ffmpeg?.rc_mode || "vbr_hq";
-          const bitrate = ffmpegConfig.bitrate || this.config.ffmpeg?.bitrate || "3M";
-          const maxrate = ffmpegConfig.maxrate || this.config.ffmpeg?.maxrate || "6M";
-          const lookahead = ffmpegConfig.lookahead !== undefined ? ffmpegConfig.lookahead : this.config.ffmpeg?.lookahead || 32;
-          const bframes = ffmpegConfig.bframes !== undefined ? ffmpegConfig.bframes : this.config.ffmpeg?.bframes || 3;
-          const bRefMode = ffmpegConfig.b_ref_mode || this.config.ffmpeg?.b_ref_mode || "middle";
-          const spatialAQ = ffmpegConfig.spatial_aq !== false && this.config.ffmpeg?.spatial_aq !== false;
-          const temporalAQ = ffmpegConfig.temporal_aq !== false && this.config.ffmpeg?.temporal_aq !== false;
-          const aqStrength = ffmpegConfig.aq_strength || this.config.ffmpeg?.aq_strength || 8;
-          const multipass = ffmpegConfig.multipass || this.config.ffmpeg?.multipass || "fullres";
-
+          // Use already loaded bitrate/maxrate variables (formatted above)
           logger.info(
             `NVENC Advanced: rc=${rcMode}, bitrate=${bitrate}, maxrate=${maxrate}, lookahead=${lookahead}, bf=${bframes}, aq=${spatialAQ ? 1 : 0}/${temporalAQ ? 1 : 0}, multipass=${multipass}`
           );
@@ -246,16 +244,16 @@ class VideoEncoder extends EventEmitter {
               // NVENC (GPU) progress calculation:
               // FFmpeg progress.timemark is sometimes unreliable with NVENC
               // Use frames processed instead for more accurate progress
-              
+
               let currentTime = 0;
               let percent = 0;
-              
+
               if (progress.frames && totalFrames > 0) {
                 // Method 1: Use frames (most reliable for NVENC)
                 const framesProcessed = parseInt(progress.frames) || 0;
                 percent = (framesProcessed / totalFrames) * 100;
-                currentTime = (framesProcessed / videoInfo.video.fps);
-                
+                currentTime = framesProcessed / videoInfo.video.fps;
+
                 logger.debug(`[NVENC Progress] Frames: ${framesProcessed}/${totalFrames} (${percent.toFixed(2)}%)`);
               } else if (progress.timemark) {
                 // Method 2: Fallback to timemark parsing (CPU encoding or when frames not available)
@@ -263,19 +261,19 @@ class VideoEncoder extends EventEmitter {
                 const hours = parseInt(timeParts[0]) || 0;
                 const minutes = parseInt(timeParts[1]) || 0;
                 const seconds = parseFloat(timeParts[2]) || 0;
-                
+
                 currentTime = hours * 3600 + minutes * 60 + seconds;
                 percent = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
               }
 
               const elapsedSeconds = (Date.now() - this.startTime) / 1000;
-              
+
               // FIXED: Always calculate ETA even for small progress
               let eta = null;
               if (percent > 0.1 && elapsedSeconds > 5) {
                 const totalEstimatedSeconds = (elapsedSeconds * 100) / percent;
                 const remainingSeconds = totalEstimatedSeconds - elapsedSeconds;
-                
+
                 // Only validate that ETA is reasonable (not negative, not > 48h)
                 if (isFinite(remainingSeconds) && remainingSeconds >= 0 && remainingSeconds <= 172800) {
                   eta = Math.round(remainingSeconds);

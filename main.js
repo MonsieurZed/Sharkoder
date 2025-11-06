@@ -15,14 +15,12 @@ const { QueueManager } = require("./backend/queue");
 const { TransferManager } = require("./backend/transfer");
 const { ProgressFileManager } = require("./backend/progressfile");
 const { logger, formatBytes } = require("./backend/utils");
-const { WebDAVExplorer } = require("./backend/webdav-explorer");
 
 let mainWindow;
 let tray;
 let queueManager;
 let transferManager; // Unified SFTP/WebDAV manager
 let progressFileManager;
-let webdavExplorer; // WebDAV explorer for remote file browsing
 
 // Hook logger to send logs to renderer
 const originalLoggerMethods = {
@@ -55,8 +53,8 @@ logger.error = (...args) => sendLogToRenderer("error", ...args);
 // Initialize app directories
 const initAppDirectories = async () => {
   const config = require("./sharkoder.config.json");
-  await fs.ensureDir(config.local_temp);
-  await fs.ensureDir(config.local_backup);
+  await fs.ensureDir(config.storage.local_temp);
+  await fs.ensureDir(config.storage.local_backup);
   await fs.ensureDir("./logs");
 };
 
@@ -179,13 +177,11 @@ const createTray = () => {
 
 // IPC Handlers
 const setupIpcHandlers = () => {
-  // WebDAV Explorer operations
+  // WebDAV operations - use TransferManager's WebDAV connection
   ipcMain.handle("webdav:connect", async () => {
     try {
-      const config = require("./sharkoder.config.json");
-      webdavExplorer = new WebDAVExplorer(config);
-      const result = await webdavExplorer.connect();
-      return result;
+      await transferManager.ensureConnection();
+      return { success: true };
     } catch (error) {
       logger.error("WebDAV connection failed:", error);
       return { success: false, error: error.message };
@@ -194,9 +190,7 @@ const setupIpcHandlers = () => {
 
   ipcMain.handle("webdav:disconnect", async () => {
     try {
-      if (webdavExplorer) {
-        await webdavExplorer.disconnect();
-      }
+      // TransferManager handles connection lifecycle, no action needed
       return { success: true };
     } catch (error) {
       logger.error("WebDAV disconnection failed:", error);
@@ -204,14 +198,10 @@ const setupIpcHandlers = () => {
     }
   });
 
-  ipcMain.handle("webdav:listDirectory", async (event, remotePath, includeVideoInfo = false) => {
+  ipcMain.handle("webdav:listDirectory", async (event, remotePath) => {
     try {
-      if (!webdavExplorer) {
-        const config = require("./sharkoder.config.json");
-        webdavExplorer = new WebDAVExplorer(config);
-        await webdavExplorer.connect();
-      }
-      const items = await webdavExplorer.listDirectory(remotePath || "/", includeVideoInfo);
+      await transferManager.ensureConnection();
+      const items = await transferManager.listDirectory(remotePath || "/");
       return { success: true, items };
     } catch (error) {
       logger.error("Failed to list directory:", error);
@@ -221,12 +211,8 @@ const setupIpcHandlers = () => {
 
   ipcMain.handle("webdav:getFolderStats", async (event, remotePath) => {
     try {
-      if (!webdavExplorer) {
-        const config = require("./sharkoder.config.json");
-        webdavExplorer = new WebDAVExplorer(config);
-        await webdavExplorer.connect();
-      }
-      const stats = await webdavExplorer.getFolderStats(remotePath || "/");
+      await transferManager.ensureConnection();
+      const stats = await transferManager.webdavManager.getFolderStats(remotePath || "/");
       return { success: true, stats };
     } catch (error) {
       logger.error("Failed to get folder stats:", error);
@@ -236,12 +222,8 @@ const setupIpcHandlers = () => {
 
   ipcMain.handle("webdav:scanFolderRecursive", async (event, remotePath) => {
     try {
-      if (!webdavExplorer) {
-        const config = require("./sharkoder.config.json");
-        webdavExplorer = new WebDAVExplorer(config);
-        await webdavExplorer.connect();
-      }
-      const files = await webdavExplorer.scanFolderRecursive(remotePath || "/");
+      await transferManager.ensureConnection();
+      const files = await transferManager.webdavManager.scanFolderRecursive(remotePath || "/");
       return { success: true, files };
     } catch (error) {
       logger.error("Failed to scan folder recursively:", error);
@@ -251,12 +233,8 @@ const setupIpcHandlers = () => {
 
   ipcMain.handle("webdav:getFileInfo", async (event, remotePath) => {
     try {
-      if (!webdavExplorer) {
-        const config = require("./sharkoder.config.json");
-        webdavExplorer = new WebDAVExplorer(config);
-        await webdavExplorer.connect();
-      }
-      const fileInfo = await webdavExplorer.getFileInfo(remotePath);
+      await transferManager.ensureConnection();
+      const fileInfo = await transferManager.webdavManager.stat(remotePath);
       return { success: true, fileInfo };
     } catch (error) {
       logger.error("Failed to get file info:", error);
@@ -329,11 +307,8 @@ const setupIpcHandlers = () => {
   // Delete file or empty folder via WebDAV
   ipcMain.handle("webdav:delete", async (event, remotePath, isDirectory = false) => {
     try {
-      if (!webdavExplorer) {
-        return { success: false, error: "WebDAV not initialized" };
-      }
-
-      const result = await webdavExplorer.deleteFileOrFolder(remotePath, isDirectory);
+      await transferManager.ensureConnection();
+      const result = await transferManager.webdavManager.deleteFile(remotePath);
       return { success: result };
     } catch (error) {
       logger.error("WebDAV delete failed:", error);
@@ -344,16 +319,14 @@ const setupIpcHandlers = () => {
   // Download file or folder to default directory
   ipcMain.handle("webdav:downloadToDefault", async (event, remotePath, isDirectory = false) => {
     try {
-      if (!webdavExplorer) {
-        return { success: false, error: "WebDAV not initialized" };
-      }
+      await transferManager.ensureConnection();
 
-      // Load config to get default download path (bypass require cache)
+      // Load config to get default download path
       delete require.cache[require.resolve("./sharkoder.config.json")];
       const userConfig = require("./sharkoder.config.json");
       const downloadPath = userConfig.default_download_path;
 
-      logger.info(`📂 Download path from config: "${downloadPath || 'NOT SET'}"`);
+      logger.info(`📂 Download path from config: "${downloadPath || "NOT SET"}"`);
 
       if (!downloadPath) {
         return { success: false, error: "Default download path not configured. Please set it in Settings." };
@@ -370,28 +343,39 @@ const setupIpcHandlers = () => {
       logger.info(`📥 Starting download: ${remotePath} (directory: ${isDirectory}) -> ${downloadPath}`);
 
       if (isDirectory) {
-        // Download folder recursively
-        const result = await webdavExplorer.downloadFolderRecursive(remotePath, downloadPath, (progress) => {
-          // Send progress updates to renderer
-          event.sender.send("download:progress", { remotePath, ...progress });
-        });
-        
-        return { 
-          success: true, 
-          message: `Downloaded ${result.filesDownloaded} files (${formatBytes(result.totalSize)})`,
-          ...result 
+        // Download folder recursively - scan for files then download each
+        const files = await transferManager.webdavManager.scanFolderRecursive(remotePath);
+        let downloadedCount = 0;
+        let totalSize = 0;
+
+        for (const file of files) {
+          const fileName = path.basename(file.path);
+          const localPath = path.join(downloadPath, fileName);
+          await transferManager.downloadFile(file.path, localPath, (progress) => {
+            event.sender.send("download:progress", { remotePath: file.path, ...progress });
+          });
+          downloadedCount++;
+          totalSize += file.size || 0;
+        }
+
+        return {
+          success: true,
+          message: `Downloaded ${downloadedCount} files (${formatBytes(totalSize)})`,
+          filesDownloaded: downloadedCount,
+          totalSize,
         };
       } else {
         // Download single file
-        const localPath = await webdavExplorer.downloadToDirectory(remotePath, downloadPath, (progress) => {
-          // Send progress updates to renderer
+        const fileName = path.basename(remotePath);
+        const localPath = path.join(downloadPath, fileName);
+        await transferManager.downloadFile(remotePath, localPath, (progress) => {
           event.sender.send("download:progress", { remotePath, ...progress });
         });
-        
-        return { 
-          success: true, 
+
+        return {
+          success: true,
           localPath,
-          message: `File downloaded to: ${localPath}` 
+          message: `File downloaded to: ${localPath}`,
         };
       }
     } catch (error) {
@@ -412,23 +396,23 @@ const setupIpcHandlers = () => {
       // Save preset as JSON file to server root
       const presetJson = JSON.stringify(preset, null, 2);
       const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, "ffmpeg_preset.json");
-      
+
       await fs.writeFile(tempPresetPath, presetJson, "utf8");
-      
+
       // Upload to server root WITHOUT creating backup (it's just a config file)
       // Temporarily disable backup creation
       const originalBackupSetting = transferManager.config.advanced?.create_backups;
       if (!transferManager.config.advanced) transferManager.config.advanced = {};
       transferManager.config.advanced.create_backups = false;
-      
+
       const result = await transferManager.uploadFile(tempPresetPath, "/ffmpeg_preset.json");
-      
+
       // Restore original backup setting
       transferManager.config.advanced.create_backups = originalBackupSetting;
-      
+
       // Cleanup temp file
       await fs.remove(tempPresetPath);
-      
+
       if (result.success) {
         logger.info("✅ FFmpeg preset saved to server: /ffmpeg_preset.json");
         return { success: true, path: "/ffmpeg_preset.json" };
@@ -451,17 +435,17 @@ const setupIpcHandlers = () => {
 
       // Download preset from server root
       const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, "ffmpeg_preset_downloaded.json");
-      
+
       const result = await transferManager.downloadFile("/ffmpeg_preset.json", tempPresetPath);
-      
+
       if (result.success) {
         // Read and parse the preset
         const presetJson = await fs.readFile(tempPresetPath, "utf8");
         const preset = JSON.parse(presetJson);
-        
+
         // Cleanup temp file
         await fs.remove(tempPresetPath);
-        
+
         logger.info("✅ FFmpeg preset loaded from server");
         return { success: true, preset };
       } else {
@@ -472,7 +456,6 @@ const setupIpcHandlers = () => {
       return { success: false, error: error.message };
     }
   });
-
 
   // Queue operations
   ipcMain.handle("queue:addJob", async (event, filePath, fileInfo) => {
@@ -827,7 +810,7 @@ const setupIpcHandlers = () => {
           jobId,
           type: "upload",
           ...progress,
-          filename: path.basename(sourcePath)
+          filename: path.basename(sourcePath),
         });
       });
 
@@ -868,7 +851,7 @@ const setupIpcHandlers = () => {
         type: "move",
         step: "Moving backup to original location",
         percent: 50,
-        filename: path.basename(job.filepath)
+        filename: path.basename(job.filepath),
       });
 
       // Simply rename/move the backup file back to original location
@@ -881,7 +864,7 @@ const setupIpcHandlers = () => {
         type: "move",
         step: "Restore completed",
         percent: 100,
-        filename: path.basename(job.filepath)
+        filename: path.basename(job.filepath),
       });
 
       logger.info(`✅ Restored original file from server backup (instant move): ${job.filepath}`);
@@ -974,7 +957,7 @@ const setupIpcHandlers = () => {
       const result = await dialog.showOpenDialog(mainWindow, {
         properties: ["openDirectory"],
         defaultPath: defaultPath || undefined,
-        title: "Select Directory"
+        title: "Select Directory",
       });
 
       if (result.canceled) {
@@ -1048,29 +1031,57 @@ const setupIpcHandlers = () => {
     }
   });
 
-  // WebDAV Build complete cache (optimized)
+  // WebDAV Build complete cache (calcul complet de toutes les stats)
   ipcMain.handle("webdav:buildCompleteCache", async (event) => {
     try {
-      if (!webdavExplorer) {
-        return { success: false, error: "WebDAV not connected" };
-      }
+      await transferManager.ensureConnection();
 
-      logger.info("Building complete cache (optimized)...");
+      logger.info("Building complete cache - scanning all folders...");
 
-      // Progress callback to send updates to renderer
-      const onProgress = (progress) => {
+      // Get root directory listing
+      const rootItems = await transferManager.listDirectory("/");
+      const folders = rootItems.filter((item) => item.type === "directory");
+
+      const cache = {};
+      let processedCount = 0;
+
+      // Progress callback
+      const sendProgress = (current, total) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("webdav:cacheProgress", progress);
+          mainWindow.webContents.send("webdav:cacheProgress", {
+            processed: current,
+            total: total,
+            message: `Processing folder ${current}/${total}...`,
+          });
         }
       };
 
-      const result = await webdavExplorer.buildCompleteCache(onProgress);
-
-      if (result.success) {
-        logger.info(`Cache built successfully: ${result.stats.totalFolders} folders in ${result.stats.totalTime}s`);
+      // Calculate stats for each folder
+      for (const folder of folders) {
+        try {
+          const stats = await transferManager.webdavManager.getFolderStats(folder.path);
+          cache[folder.path] = {
+            ...stats,
+            lastModified: new Date().toISOString(),
+            upToDate: true,
+          };
+          processedCount++;
+          sendProgress(processedCount, folders.length);
+        } catch (error) {
+          logger.warn(`Failed to get stats for ${folder.path}:`, error.message);
+        }
       }
 
-      return result;
+      logger.info(`Cache built: ${processedCount}/${folders.length} folders processed`);
+
+      return {
+        success: true,
+        cache: cache,
+        stats: {
+          totalFolders: processedCount,
+          totalTime: 0,
+        },
+      };
     } catch (error) {
       logger.error("Failed to build complete cache:", error);
       return { success: false, error: error.message };

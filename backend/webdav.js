@@ -28,8 +28,7 @@ class WebDAVManager {
         webdavModule = await import("webdav");
       }
 
-      // WebDAV URL for Seedhost: http://ds10256.seedhost.eu:13888
-      let webdavUrl = this.config.webdav_url || "http://ds10256.seedhost.eu:13888";
+      let webdavUrl = this.config.remote.webdav.url;
 
       // Validate and fix URL if protocol is missing
       if (!webdavUrl.startsWith("http://") && !webdavUrl.startsWith("https://")) {
@@ -37,8 +36,8 @@ class WebDAVManager {
         webdavUrl = "http://" + webdavUrl;
       }
 
-      const webdavUser = this.config.webdav_user || "sharkdav";
-      const webdavPass = this.config.webdav_password || "sharkdav";
+      const webdavUser = this.config.remote.webdav.username;
+      const webdavPass = this.config.remote.webdav.password;
 
       logger.info(`Connecting to WebDAV server: ${webdavUrl}`);
 
@@ -87,7 +86,7 @@ class WebDAVManager {
     try {
       // Build full path: remote_path + relativePath
       // remote_path is "/data", remotePath is like "movies" or "movies/2024" or ""
-      const fullPath = remotePath ? path.posix.join(this.config.remote_path || "/", remotePath) : this.config.remote_path || "/";
+      const fullPath = remotePath ? path.posix.join(this.config.remote.webdav.path || "/", remotePath) : this.config.remote.webdav.path || "/";
 
       logger.info(`Listing WebDAV directory: ${fullPath}`);
 
@@ -133,7 +132,7 @@ class WebDAVManager {
 
     // If remotePath already starts with remote_path, use it as-is (from listDirectory)
     // Otherwise, join with remote_path
-    const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
+    const fullRemotePath = remotePath.startsWith(this.config.remote.webdav.path || "/") ? remotePath : path.posix.join(this.config.remote.webdav.path || "/", remotePath);
 
     try {
       // Ensure local directory exists
@@ -256,7 +255,7 @@ class WebDAVManager {
 
     // If remotePath already starts with remote_path, use it as-is
     // Otherwise, join with remote_path
-    const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
+    const fullRemotePath = remotePath.startsWith(this.config.remote.webdav.path || "/") ? remotePath : path.posix.join(this.config.remote.webdav.path || "/", remotePath);
     const backupPath = getBackupPath(fullRemotePath);
 
     try {
@@ -410,7 +409,7 @@ class WebDAVManager {
   async deleteBackupFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
+    const fullRemotePath = remotePath.startsWith(this.config.remote.webdav.path || "/") ? remotePath : path.posix.join(this.config.remote.webdav.path || "/", remotePath);
     const backupPath = getBackupPath(fullRemotePath);
 
     try {
@@ -432,8 +431,8 @@ class WebDAVManager {
   async renameFile(oldRemotePath, newRemotePath) {
     await this.ensureConnection();
 
-    const fullOldPath = oldRemotePath.startsWith(this.config.remote_path || "/") ? oldRemotePath : path.posix.join(this.config.remote_path || "/", oldRemotePath);
-    const fullNewPath = newRemotePath.startsWith(this.config.remote_path || "/") ? newRemotePath : path.posix.join(this.config.remote_path || "/", newRemotePath);
+    const fullOldPath = oldRemotePath.startsWith(this.config.remote.webdav.path || "/") ? oldRemotePath : path.posix.join(this.config.remote.webdav.path || "/", oldRemotePath);
+    const fullNewPath = newRemotePath.startsWith(this.config.remote.webdav.path || "/") ? newRemotePath : path.posix.join(this.config.remote.webdav.path || "/", newRemotePath);
 
     try {
       const exists = await this.client.exists(fullOldPath);
@@ -456,7 +455,7 @@ class WebDAVManager {
   async deleteFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
+    const fullRemotePath = remotePath.startsWith(this.config.remote.webdav.path || "/") ? remotePath : path.posix.join(this.config.remote.webdav.path || "/", remotePath);
 
     try {
       const exists = await this.client.exists(fullRemotePath);
@@ -479,7 +478,7 @@ class WebDAVManager {
   async restoreBackupFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = remotePath.startsWith(this.config.remote_path || "/") ? remotePath : path.posix.join(this.config.remote_path || "/", remotePath);
+    const fullRemotePath = remotePath.startsWith(this.config.remote.webdav.path || "/") ? remotePath : path.posix.join(this.config.remote.webdav.path || "/", remotePath);
     const backupPath = getBackupPath(fullRemotePath);
 
     try {
@@ -508,7 +507,7 @@ class WebDAVManager {
 
   async stat(remotePath) {
     await this.ensureConnection();
-    const fullRemotePath = path.posix.join(this.config.remote_path || "/", remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.webdav.path || "/", remotePath);
     return await this.client.stat(fullRemotePath);
   }
 
@@ -518,6 +517,194 @@ class WebDAVManager {
       return true;
     } catch (error) {
       return false;
+    }
+  }
+
+  /**
+   * Retry a function with exponential backoff
+   */
+  async retryWithBackoff(fn, maxRetries = 3, initialDelay = 1000) {
+    let lastError;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        const isRetryable =
+          error.message?.includes("ETIMEDOUT") || error.message?.includes("ECONNREFUSED") || error.message?.includes("ECONNRESET") || error.code === "ETIMEDOUT" || error.code === "ECONNREFUSED";
+
+        if (!isRetryable || attempt === maxRetries) {
+          throw error;
+        }
+
+        const delay = initialDelay * Math.pow(2, attempt);
+        logger.warn(`Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms delay due to: ${error.message}`);
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * Get folder statistics (size, file count, avg file size)
+   * Recursively scans the folder
+   */
+  async getFolderStats(remotePath = "/") {
+    await this.ensureConnection();
+
+    try {
+      const basePath = this.config.remote.webdav.path || "/";
+      const fullPath = remotePath === "/" ? basePath : path.posix.join(basePath, remotePath);
+
+      logger.debug(`Calculating folder stats for: ${fullPath}`);
+
+      let failedDirs = [];
+      const MAX_PARALLEL = 20;
+
+      const scanDirectory = async (dirPath, depth = 0) => {
+        if (depth > 20) {
+          logger.warn(`Maximum depth reached for ${dirPath}, skipping`);
+          return { totalSize: 0, fileCount: 0, videoCount: 0 };
+        }
+
+        let localTotalSize = 0;
+        let localFileCount = 0;
+        let localVideoCount = 0;
+
+        try {
+          const contents = await this.retryWithBackoff(() => this.client.getDirectoryContents(dirPath, { details: true }), 2, 500);
+
+          const contentsArray = Array.isArray(contents) ? contents : contents.data || [];
+          const subDirectories = [];
+
+          for (const item of contentsArray) {
+            const itemName = path.basename(item.filename);
+            if (itemName.startsWith(".")) continue;
+
+            if (item.type === "directory") {
+              subDirectories.push(item.filename);
+            } else {
+              localFileCount++;
+              localTotalSize += item.size || 0;
+              if (require("./utils").isVideoFile(itemName)) {
+                localVideoCount++;
+              }
+            }
+          }
+
+          if (subDirectories.length > 0) {
+            for (let i = 0; i < subDirectories.length; i += MAX_PARALLEL) {
+              const batch = subDirectories.slice(i, i + MAX_PARALLEL);
+              const results = await Promise.all(
+                batch.map((subDir) =>
+                  scanDirectory(subDir, depth + 1).catch((error) => {
+                    failedDirs.push(subDir);
+                    logger.warn(`Could not scan directory ${subDir}:`, error.message);
+                    return { totalSize: 0, fileCount: 0, videoCount: 0 };
+                  })
+                )
+              );
+
+              for (const result of results) {
+                localTotalSize += result.totalSize;
+                localFileCount += result.fileCount;
+                localVideoCount += result.videoCount;
+              }
+            }
+          }
+        } catch (error) {
+          failedDirs.push(dirPath);
+          logger.warn(`Could not scan directory ${dirPath}:`, error.message);
+        }
+
+        return { totalSize: localTotalSize, fileCount: localFileCount, videoCount: localVideoCount };
+      };
+
+      const result = await scanDirectory(fullPath);
+      const avgSize = result.fileCount > 0 ? Math.round(result.totalSize / result.fileCount) : 0;
+
+      const stats = {
+        totalSize: result.totalSize,
+        fileCount: result.fileCount,
+        videoCount: result.videoCount,
+        avgSize: avgSize,
+        totalSizeFormatted: formatBytes(result.totalSize),
+        avgSizeFormatted: formatBytes(avgSize),
+        failedDirs: failedDirs.length > 0 ? failedDirs : undefined,
+      };
+
+      logger.debug(`Folder stats for ${remotePath}: ${result.fileCount} files, ${result.videoCount} videos, ${formatBytes(result.totalSize)} total`);
+
+      return stats;
+    } catch (error) {
+      logger.error(`Failed to get folder stats for ${remotePath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Scan folder recursively and get all video files
+   */
+  async scanFolderRecursive(remotePath = "/") {
+    await this.ensureConnection();
+
+    try {
+      const basePath = this.config.remote.webdav.path || "/";
+      const fullPath = remotePath === "/" ? basePath : path.posix.join(basePath, remotePath);
+
+      logger.info(`Scanning folder recursively: ${fullPath}`);
+
+      const videoFiles = [];
+      let failedDirs = [];
+
+      const scanDirectory = async (dirPath, relativePath = "", depth = 0) => {
+        if (depth > 20) {
+          logger.warn(`Maximum depth reached for ${dirPath}, skipping`);
+          return;
+        }
+
+        try {
+          const contents = await this.retryWithBackoff(() => this.client.getDirectoryContents(dirPath, { details: true }), 2, 500);
+
+          const contentsArray = Array.isArray(contents) ? contents : contents.data || [];
+
+          for (const item of contentsArray) {
+            const itemName = path.basename(item.filename);
+            if (itemName.startsWith(".")) continue;
+
+            const itemRelativePath = relativePath ? path.posix.join(relativePath, itemName) : itemName;
+
+            if (item.type === "directory") {
+              await scanDirectory(item.filename, itemRelativePath, depth + 1);
+            } else if (require("./utils").isVideoFile(itemName)) {
+              videoFiles.push({
+                name: itemName,
+                path: itemRelativePath,
+                fullPath: item.filename,
+                size: item.size || 0,
+                modified: item.lastmod,
+                isVideo: true,
+              });
+            }
+          }
+        } catch (error) {
+          failedDirs.push(dirPath);
+          logger.warn(`Could not scan directory ${dirPath}:`, error.message);
+        }
+      };
+
+      await scanDirectory(fullPath, remotePath === "/" ? "" : remotePath);
+
+      if (failedDirs.length > 0) {
+        logger.warn(`Scan completed with ${failedDirs.length} failed directories`);
+      }
+
+      logger.info(`Found ${videoFiles.length} video files in ${remotePath}`);
+
+      return videoFiles;
+    } catch (error) {
+      logger.error(`Failed to scan folder recursively ${remotePath}:`, error);
+      throw error;
     }
   }
 }

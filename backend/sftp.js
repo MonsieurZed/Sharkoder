@@ -29,8 +29,8 @@ class SftpManager {
     try {
       // Build connection options with aggressive performance tuning
       const connectionOptions = {
-        host: this.config.remote_host,
-        username: this.config.remote_user,
+        host: this.config.remote.sftp.host,
+        username: this.config.remote.sftp.user,
         port: this.config.remote_port || 22,
         readyTimeout: this.config.connection_timeout || 30000,
         retries: 3,
@@ -71,9 +71,9 @@ class SftpManager {
         } else {
           throw new Error(`SSH key not found: ${keyPath}`);
         }
-      } else if (this.config.remote_password) {
+      } else if (this.config.remote.sftp.password) {
         // Password authentication
-        connectionOptions.password = this.config.remote_password;
+        connectionOptions.password = this.config.remote.sftp.password;
         logger.info("Using password authentication");
       } else {
         // Prompt for password if not configured
@@ -83,7 +83,7 @@ class SftpManager {
       await this.sftp.connect(connectionOptions);
 
       this.connected = true;
-      logger.info(`Connected to SFTP server: ${this.config.remote_host}`);
+      logger.info(`Connected to SFTP server: ${this.config.remote.sftp.host}`);
     } catch (error) {
       logger.error("SFTP connection failed:", error);
       throw error;
@@ -114,7 +114,7 @@ class SftpManager {
   async listFiles(remotePath = "") {
     await this.ensureConnection();
 
-    const fullPath = path.posix.join(this.config.remote_path, remotePath);
+    const fullPath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       const items = await this.sftp.list(fullPath);
@@ -192,7 +192,7 @@ class SftpManager {
   async downloadFile(remotePath, localPath, onProgress = null) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       // Ensure local directory exists
@@ -310,7 +310,7 @@ class SftpManager {
   async uploadFile(localPath, remotePath, onProgress = null) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
     const backupPath = getBackupPath(fullRemotePath);
 
     try {
@@ -438,7 +438,7 @@ class SftpManager {
   async deleteBackupFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
     const backupPath = getBackupPath(fullRemotePath);
 
     try {
@@ -460,7 +460,7 @@ class SftpManager {
   async deleteFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       const exists = await this.sftp.exists(fullRemotePath);
@@ -483,7 +483,7 @@ class SftpManager {
   async restoreBackupFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
     const backupPath = getBackupPath(fullRemotePath);
 
     try {
@@ -509,7 +509,7 @@ class SftpManager {
   async fileExists(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       await this.sftp.stat(fullRemotePath);
@@ -526,7 +526,7 @@ class SftpManager {
   async getFileSize(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       const stats = await this.sftp.stat(fullRemotePath);
@@ -540,7 +540,7 @@ class SftpManager {
   async createDirectory(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       await this.sftp.mkdir(fullRemotePath, true);
@@ -559,7 +559,7 @@ class SftpManager {
   async deleteFile(remotePath) {
     await this.ensureConnection();
 
-    const fullRemotePath = path.posix.join(this.config.remote_path, remotePath);
+    const fullRemotePath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
     try {
       await this.sftp.delete(fullRemotePath);
@@ -573,8 +573,8 @@ class SftpManager {
   async renameFile(oldRemotePath, newRemotePath) {
     await this.ensureConnection();
 
-    const fullOldPath = path.posix.join(this.config.remote_path, oldRemotePath);
-    const fullNewPath = path.posix.join(this.config.remote_path, newRemotePath);
+    const fullOldPath = path.posix.join(this.config.remote.sftp.path, oldRemotePath);
+    const fullNewPath = path.posix.join(this.config.remote.sftp.path, newRemotePath);
 
     try {
       await this.sftp.rename(fullOldPath, fullNewPath);
@@ -589,7 +589,7 @@ class SftpManager {
   async loadSizeCache() {
     await this.ensureConnection();
 
-    const cacheFilePath = path.posix.join(this.config.remote_path, this.sizeCacheFile);
+    const cacheFilePath = path.posix.join(this.config.remote.sftp.path, this.sizeCacheFile);
 
     try {
       // Check if cache file exists
@@ -623,7 +623,7 @@ class SftpManager {
   async saveSizeCache() {
     await this.ensureConnection();
 
-    const cacheFilePath = path.posix.join(this.config.remote_path, this.sizeCacheFile);
+    const cacheFilePath = path.posix.join(this.config.remote.sftp.path, this.sizeCacheFile);
 
     try {
       this.sizeCache.last_update = new Date().toISOString();

@@ -1019,7 +1019,7 @@
               console.log(`🌐 LOADING from server: ${normalizedPath}`);
               setLoadedFromCache(false);
 
-              const result = await window.electronAPI.webdavListDirectory(normalizedPath, true);
+              const result = await window.electronAPI.webdavListDirectory(normalizedPath);
 
               if (!result.success) {
                 console.error("❌ Failed:", result.error);
@@ -1171,7 +1171,7 @@
                 setConnected(true);
                 // Synchroniser le cache avec le serveur
                 await syncCacheWithServer();
-                // Charger les fichiers de la racine
+                // Charger les fichiers de la racine (sans forcer le calcul des stats)
                 await loadFiles("/");
               }
             } catch (error) {
@@ -1190,11 +1190,11 @@
           const handleInvalidateCache = (event) => {
             const { filepath } = event.detail || {};
             console.log(`🗑️ Invalidating session cache for completed job: ${filepath}`);
-            
+
             // Clear session cache completely to force reload
             setSessionCache({});
             sessionCacheRef.current = {};
-            
+
             // Reload current directory
             if (currentPath) {
               console.log(`🔄 Reloading current directory: ${currentPath}`);
@@ -1207,13 +1207,13 @@
           }
 
           // Listen for job completion events to invalidate cache
-          window.addEventListener('invalidateFileTreeCache', handleInvalidateCache);
+          window.addEventListener("invalidateFileTreeCache", handleInvalidateCache);
 
           // Cleanup listener on unmount
           return () => {
-            window.removeEventListener('invalidateFileTreeCache', handleInvalidateCache);
+            window.removeEventListener("invalidateFileTreeCache", handleInvalidateCache);
           };
-        }, [currentPath, loadFiles]); // Add dependencies
+        }, []); // Execute only on mount, not on every loadFiles or currentPath change
 
         const connectToServer = async () => {
           try {
@@ -1712,16 +1712,51 @@
                     ) : (
                       <button
                         onClick={async () => {
-                          console.log("🔄 Refresh button clicked - clearing session cache");
-                          // Clear session cache to force complete reload
-                          setSessionCache({});
-                          sessionCacheRef.current = {};
-                          // Reload current directory with force refresh
-                          await loadFiles(currentPath, true);
-                          await refreshAllFolders();
+                          console.log("🔄 Refresh button clicked - deep exploration with metadata");
+                          setIsRefreshing(true);
+
+                          try {
+                            // Clear session cache to force complete reload
+                            setSessionCache({});
+                            sessionCacheRef.current = {};
+
+                            // Explore folder recursively with full metadata
+                            const result = await window.api.invoke("webdav:exploreFolderRecursive", currentPath);
+
+                            if (result.success) {
+                              console.log("✅ Deep exploration complete:", result);
+
+                              // Update stats cache with detailed folder stats
+                              if (result.stats) {
+                                const updatedStats = { ...statsCache };
+                                Object.keys(result.stats).forEach((path) => {
+                                  updatedStats[path] = result.stats[path];
+                                });
+                                setStatsCache(updatedStats);
+                                localStorage.setItem("statsCache", JSON.stringify(updatedStats));
+                              }
+
+                              // Reload current directory with force refresh to update UI
+                              await loadFiles(currentPath, true);
+                            } else {
+                              console.error("❌ Deep exploration failed:", result.error);
+                              // Fallback to normal refresh
+                              await loadFiles(currentPath, true);
+                            }
+
+                            // Refresh all folder stats display
+                            await refreshAllFolders();
+                          } catch (error) {
+                            console.error("❌ Error during deep refresh:", error);
+                            // Fallback to normal refresh
+                            await loadFiles(currentPath, true);
+                            await refreshAllFolders();
+                          } finally {
+                            setIsRefreshing(false);
+                          }
                         }}
                         className="btn-secondary text-xs"
-                        title="Refresh directory and all folder stats"
+                        title="Deep refresh with full metadata exploration"
                       >
                         🔄 Refresh
                       </button>
@@ -1979,8 +2014,13 @@
           console.log(`[CompletedJobs] Found ${completed.length} completed jobs out of ${jobs.length} total jobs`);
           setCompletedJobs(completed);
 
-          // Check backup status for each completed job
+          // Check backup status for each completed job (only if not already checked)
           completed.forEach(async (job) => {
+            // Skip if already checked
+            if (backupStatus[job.id] !== undefined) {
+              return;
+            }
+
             const result = await window.electronAPI.backupCheckExists(job.id);
             if (result.success) {
               setBackupStatus((prev) => ({
@@ -2439,7 +2479,7 @@
                                     ▶️ Play Encoded
                                   </button>
                                 )}
-                                
+
                                 {/* Restore buttons */}
                                 {status.localOriginal && (
                                   <button
@@ -4364,9 +4404,11 @@
 
             // Invalidate FileTree cache to force reload of directory
             console.log("Dispatching invalidateFileTreeCache event");
-            window.dispatchEvent(new CustomEvent('invalidateFileTreeCache', { 
-              detail: { filepath: data.filepath } 
-            }));
+            window.dispatchEvent(
+              new CustomEvent("invalidateFileTreeCache", {
+                detail: { filepath: data.filepath },
+              })
+            );
 
             // Sync cache after upload completion
             try {

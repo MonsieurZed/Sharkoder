@@ -56,8 +56,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // Config operations
   configGet: () => ipcRenderer.invoke("config:get"),
   configSave: (config) => ipcRenderer.invoke("config:save", config),
+  configReload: () => ipcRenderer.invoke("config:reload"),
+  configValidate: () => ipcRenderer.invoke("config:validate"),
   configLoadUserConfig: () => ipcRenderer.invoke("config:loadUserConfig"),
   configSaveUserConfig: (userConfig) => ipcRenderer.invoke("config:saveUserConfig", userConfig),
+
+  // Folder exploration
+  webdavExploreFolderRecursive: (folderPath) => ipcRenderer.invoke("webdav:exploreFolderRecursive", folderPath),
 
   // System operations
   openFolder: (folderPath) => ipcRenderer.invoke("system:openFolder", folderPath),

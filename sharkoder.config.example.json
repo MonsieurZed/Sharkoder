@@ -1,70 +1,155 @@
 {
-  "_comment": "Sharkoder Configuration Example - Copy this to sharkoder.config.json and customize",
+  "_comment": "===== SHARKODER CONFIGURATION FILE =====",
+  "_comment_version": "Copy this file to sharkoder.config.json and customize for your setup",
 
-  "remote_host": "your-server.com",
-  "remote_user": "your-username",
-  "remote_port": 22,
-  "remote_path": "/home/username/media",
+  "version": "1.0",
+  "last_update": "2025-01-01T00:00:00.000Z",
 
-  "_comment_auth": "Authentication: Choose ONE method below",
-  "remote_password": "your-password-here",
-  "_or_use_ssh_key": "Comment out password and use these instead:",
-  "ssh_key_path": "C:/Users/YourName/.ssh/id_rsa",
-  "ssh_key_passphrase": "key-passphrase-if-any",
+  "_comment_ffmpeg": "===== FFMPEG ENCODING SETTINGS =====",
+  "ffmpeg": {
+    "_comment_gpu": "GPU Settings - NVIDIA NVENC Hardware Acceleration",
+    "gpu_enabled": true,
+    "force_gpu": false,
 
-  "local_temp": "C:/Users/YourName/AppData/Local/Temp/Sharkoder/cache",
-  "local_backup": "C:/Users/YourName/AppData/Local/Temp/Sharkoder/backups",
-  "default_download_path": "C:/Users/YourName/Downloads",
+    "_comment_nvenc": "NVENC Settings (GPU encoding)",
+    "encode_preset": "p7",
+    "_preset_options": "p1 (fastest) to p7 (slowest/best quality)",
+    "cq": 24,
+    "_cq_range": "0-51, lower = better quality (recommended: 20-28)",
+    "rc_mode": "vbr_hq",
+    "_rc_modes": "vbr_hq, constqp, vbr, cbr",
+    "bitrate": 5,
+    "_bitrate_info": "Average bitrate in Mbps (720p: 2-3, 1080p: 4-6, 4K: 15-25)",
+    "maxrate": 8,
+    "_maxrate_info": "Max bitrate in Mbps (recommended: 1.5-2x average)",
+    "lookahead": 32,
+    "_lookahead_range": "0-32 frames for bitrate optimization",
+    "bframes": 3,
+    "_bframes_range": "0-4 bidirectional frames",
+    "b_ref_mode": "middle",
+    "_b_ref_modes": "disabled, each, middle (recommended)",
+    "spatial_aq": true,
+    "temporal_aq": true,
+    "aq_strength": 8,
+    "_aq_strength_range": "1-15, higher = stronger adaptive quantization",
+    "multipass": "fullres",
+    "_multipass_modes": "disabled, qres (1/4 res), fullres (recommended)",
 
-  "_comment_webdav": "WebDAV settings (optional) - include http:// or https:// in URL",
-  "webdav_enabled": false,
-  "webdav_url": "http://your-server.com:13888",
-  "webdav_username": "your-webdav-user",
-  "webdav_password": "your-webdav-password",
-  "webdav_path": "/",
-  "webdav_transfer_mode": "prefer_webdav",
+    "_comment_cpu": "CPU Settings (x265 fallback when GPU unavailable)",
+    "cpu_preset": "medium",
+    "_cpu_preset_options": "ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow",
+    "crf": 23,
+    "_crf_range": "0-51, lower = better quality (recommended: 20-28)",
 
-  "_comment_encoding": "Encoding settings - preset from p1 (fast) to p7 (slow), cq 18-28 (lower=better quality)",
-  "encode_preset": "p7",
-  "cq": 18,
-
-  "_comment_performance": "Performance tuning",
-  "max_concurrent_downloads": 2,
-  "max_prefetch_files": 3,
-  "retry_attempts": 2,
-  "connection_timeout": 30000,
-
-  "_comment_cleanup": "Cleanup settings (days to keep)",
-  "cleanup_old_jobs_days": 30,
-  "cleanup_old_progress_days": 365,
-
-  "ffmpeg_options": {
-    "hwaccel": "cuda",
-    "video_codec": "hevc_nvenc",
+    "_comment_common": "Common Settings (both GPU and CPU)",
     "audio_codec": "copy",
-    "_comment": "Additional FFmpeg options can be added here",
-    "extra_options": []
+    "_audio_codec_options": "copy (recommended), aac, ac3, opus",
+    "audio_bitrate": 192,
+    "_audio_bitrate_info": "In kbps, only used if audio_codec is not 'copy'",
+    "two_pass": true,
+    "_two_pass_info": "Two-pass encoding for better bitrate allocation (CPU only)",
+    "tune": null,
+    "_tune_options": "null, film, animation, grain, stillimage",
+    "profile": "main10",
+    "_profile_options": "main (8-bit), main10 (10-bit, recommended for better color)"
   },
 
-  "supported_extensions": [".mkv", ".mp4", ".avi", ".mov", ".m4v", ".wmv", ".flv", ".webm"],
+  "_comment_remote": "===== REMOTE SERVER CONFIGURATION =====",
+  "remote": {
+    "transfer_method": "auto",
+    "_transfer_methods": "auto (try WebDAV first, fallback to SFTP), webdav, sftp",
 
+    "_comment_sftp": "SFTP Connection Settings",
+    "sftp": {
+      "host": "your-server.com",
+      "user": "your-username",
+      "password": "your-password",
+      "_password_alt": "Or use SSH key authentication (not yet implemented)",
+      "path": "/home/username/media"
+    },
+
+    "_comment_webdav": "WebDAV Connection Settings (optional but recommended)",
+    "webdav": {
+      "enabled": true,
+      "url": "http://your-server.com:13888",
+      "_url_info": "Include http:// or https:// in URL",
+      "username": "your-webdav-user",
+      "password": "your-webdav-password",
+      "path": "/"
+    }
+  },
+
+  "_comment_storage": "===== LOCAL STORAGE PATHS =====",
+  "storage": {
+    "local_temp": "C:\\Users\\YourName\\AppData\\Local\\Sharkoder\\cache",
+    "_local_temp_info": "Temporary storage for downloads and encoding (needs 3x video size free)",
+    "local_backup": "C:\\Users\\YourName\\AppData\\Local\\Sharkoder\\backup",
+    "_local_backup_info": "Local backups of original and encoded files for comparison",
+    "default_download_path": "C:\\Users\\YourName\\Downloads",
+    "_download_path_info": "Where files are downloaded when using the download button"
+  },
+
+  "_comment_advanced": "===== ADVANCED SETTINGS =====",
+  "advanced": {
+    "_comment_connection": "Connection & Transfer Settings",
+    "connection": {
+      "max_concurrent_downloads": 1,
+      "_max_downloads_range": "1-5, number of simultaneous downloads",
+      "max_prefetch_files": 1,
+      "_max_prefetch_range": "1-10, files to download ahead of queue",
+      "retry_attempts": 2,
+      "_retry_range": "1-10, number of retry attempts on failure",
+      "connection_timeout": 30000,
+      "_timeout_info": "In milliseconds (30000 = 30 seconds)"
+    },
+
+    "_comment_cleanup": "Cleanup & Maintenance",
+    "cleanup": {
+      "cleanup_old_jobs_days": 30,
+      "_cleanup_jobs_info": "Days to keep completed/failed jobs in database",
+      "cleanup_old_progress_days": 365,
+      "_cleanup_progress_info": "Days to keep progress files"
+    },
+
+    "_comment_behavior": "Behavior & Safety Settings",
+    "behavior": {
+      "log_level": "info",
+      "_log_levels": "error, warn, info, debug",
+      "auto_start_queue": false,
+      "_auto_start_info": "Automatically start queue on app launch",
+      "verify_checksums": true,
+      "_verify_info": "Verify file integrity after transfer",
+      "create_backups": false,
+      "_create_backups_info": "Create local backups of original files",
+      "keep_server_backups": false,
+      "_server_backups_info": "Keep backup of original on server",
+      "keep_encoded": true,
+      "_keep_encoded_info": "Keep local copy of encoded file after upload",
+      "keep_original": true,
+      "_keep_original_info": "Keep local backup of original file",
+      "simulation_mode": false,
+      "_simulation_info": "Skip encoding (just copy files) for testing pipeline"
+    }
+  },
+
+  "_comment_ui": "===== USER INTERFACE SETTINGS =====",
+  "ui": {
+    "show_notifications": true,
+    "auto_refresh_interval": 5000,
+    "_refresh_interval_info": "In milliseconds (5000 = 5 seconds)",
+    "hide_empty_folders": true,
+    "_hide_empty_info": "Hide folders with no video files",
+    "theme": "dark",
+    "_theme_options": "dark, light (light theme not yet implemented)"
+  },
+
+  "_comment_notifications": "===== NOTIFICATION SETTINGS =====",
   "notification_settings": {
     "show_completion_notifications": true,
+    "_completion_info": "Show notification when job completes",
     "show_error_notifications": true,
-    "minimize_to_tray": true
-  },
-
-  "advanced": {
-    "log_level": "info",
-    "auto_start_queue": true,
-    "verify_checksums": true,
-    "_comment_backups": "Backup settings for quality comparison and safety",
-    "keep_original": true,
-    "keep_encoded": true,
-    "create_backups": true,
-    "_comment_skip_hevc": "Set to true to skip re-encoding files already in HEVC/x265 format",
-    "skip_hevc_reencode": false,
-    "_comment_simulation": "Set to true to skip encoding entirely (just copy files for testing queue/transfer)",
-    "simulation_mode": false
+    "_error_info": "Show notification on errors",
+    "minimize_to_tray": true,
+    "_tray_info": "Minimize to system tray instead of taskbar"
   }
 }

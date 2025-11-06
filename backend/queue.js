@@ -312,7 +312,7 @@ class QueueManager extends EventEmitter {
       logger.info(`[REJECT] Job ${jobId} rejected, will re-encode`);
 
       // Delete the encoded file
-      const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+      const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
       await safeFileDelete(encodedPath);
 
       // Reset to ready_encode status to try encoding again
@@ -468,13 +468,13 @@ class QueueManager extends EventEmitter {
       const job = waitingJobs[0];
 
       // Check if we have enough space
-      await ensureSpaceAvailable(this.config.local_temp, job.size * 3); // 3x for safety (original + encoded + buffer)
+      await ensureSpaceAvailable(this.config.storage.local_temp, job.size * 3); // 3x for safety (original + encoded + buffer)
 
       logger.info(`[DOWNLOAD] Starting job ${job.id}: ${job.filepath}`);
       await markJobStarted(job.id);
       await updateJob(job.id, { status: "downloading" });
 
-      const localPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
+      const localPath = path.join(this.config.storage.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
 
       await fs.ensureDir(path.dirname(localPath));
 
@@ -518,7 +518,7 @@ class QueueManager extends EventEmitter {
       const job = readyJobs[0];
       this.encodingJob = job;
 
-      const localPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
+      const localPath = path.join(this.config.storage.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
 
       logger.info(`[ENCODE] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "encoding" });
@@ -537,7 +537,7 @@ class QueueManager extends EventEmitter {
           logger.info(`[ENCODE] 🧪 SIMULATION MODE - Job ${job.id} will skip encoding and just copy the file`);
 
           // Copy file instead of encoding
-          const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+          const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
           await fs.ensureDir(path.dirname(encodedPath));
           logger.info(`[ENCODE] 🧪 SIMULATION: Copying file: ${localPath} -> ${encodedPath}`);
           await fs.copy(localPath, encodedPath);
@@ -594,7 +594,7 @@ class QueueManager extends EventEmitter {
           logger.info(`[ENCODE] Job ${job.id} already in HEVC/H.265 format (codec: ${codecBefore}), skipping encoding (skip_hevc_reencode=true)`);
 
           // Copy file instead of re-encoding
-          const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+          const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
           await fs.ensureDir(path.dirname(encodedPath));
           logger.info(`[ENCODE] Copying file: ${localPath} -> ${encodedPath}`);
           await fs.copy(localPath, encodedPath);
@@ -645,7 +645,7 @@ class QueueManager extends EventEmitter {
         }
 
         // Encode
-        const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+        const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
         await fs.ensureDir(path.dirname(encodedPath));
 
@@ -680,7 +680,7 @@ class QueueManager extends EventEmitter {
         // Save encoded file to backups/encoded/ directory with full directory structure
         // Remove leading slash and normalize path
         const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
-        const encodedBackupPath = path.join(this.config.local_backup, "encoded", normalizedPath);
+        const encodedBackupPath = path.join(this.config.storage.local_backup, "encoded", normalizedPath);
         await fs.ensureDir(path.dirname(encodedBackupPath));
         await fs.copy(result.outputPath, encodedBackupPath);
         logger.info(`Saved encoded file: ${encodedBackupPath}`);
@@ -771,7 +771,7 @@ class QueueManager extends EventEmitter {
 
       const job = readyJobs[0];
 
-      const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+      const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
       logger.info(`[UPLOAD] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "uploading" });
@@ -796,8 +796,8 @@ class QueueManager extends EventEmitter {
 
           // Calculate local backup paths
           const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
-          const localOriginalPath = path.join(this.config.local_backup, "originals", normalizedPath);
-          const localEncodedPath = path.join(this.config.local_backup, "encoded", normalizedPath);
+          const localOriginalPath = path.join(this.config.storage.local_backup, "originals", normalizedPath);
+          const localEncodedPath = path.join(this.config.storage.local_backup, "encoded", normalizedPath);
 
           // Mark job as completed with actual codec used and backup paths
           const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
@@ -840,7 +840,7 @@ class QueueManager extends EventEmitter {
     // Save original file to backups/originals/ directory with full directory structure
     // Remove leading slash and normalize path
     const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
-    const backupPath = path.join(this.config.local_backup, "originals", normalizedPath);
+    const backupPath = path.join(this.config.storage.local_backup, "originals", normalizedPath);
 
     await fs.ensureDir(path.dirname(backupPath));
     await fs.copy(originalPath, backupPath);
@@ -874,8 +874,8 @@ class QueueManager extends EventEmitter {
       logger.warn("Failed to load user config for cleanup, using defaults:", error);
     }
 
-    const downloadedPath = path.join(this.config.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
-    const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+    const downloadedPath = path.join(this.config.storage.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
+    const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
 
     // Normalize path for backup structure (remove leading slash)
     const normalizedPath = job.filepath.replace(/^\/+/, "").replace(/\\/g, "/");
@@ -885,7 +885,7 @@ class QueueManager extends EventEmitter {
       if (await fs.pathExists(downloadedPath)) {
         if (keepOriginal) {
           // Move to backup instead of deleting (with retry for locked files) - preserve directory structure
-          const backupPath = path.join(this.config.local_backup, "originals", normalizedPath);
+          const backupPath = path.join(this.config.storage.local_backup, "originals", normalizedPath);
           await fs.ensureDir(path.dirname(backupPath));
           const moved = await safeFileMove(downloadedPath, backupPath);
           if (moved) {
@@ -907,7 +907,7 @@ class QueueManager extends EventEmitter {
       if (await fs.pathExists(encodedPath)) {
         if (keepEncoded) {
           // Keep the encoded file in a dedicated folder (with retry for locked files) - preserve directory structure
-          const keepPath = path.join(this.config.local_backup, "encoded", normalizedPath);
+          const keepPath = path.join(this.config.storage.local_backup, "encoded", normalizedPath);
           await fs.ensureDir(path.dirname(keepPath));
           const moved = await safeFileMove(encodedPath, keepPath);
           if (moved) {
@@ -976,7 +976,7 @@ class QueueManager extends EventEmitter {
         logger.info(`Resuming interrupted job: ${job.id}`);
 
         // Check if encoded file exists (job was interrupted during upload)
-        const encodedPath = path.join(this.config.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
+        const encodedPath = path.join(this.config.storage.local_temp, "encoded", `${job.id}_${path.basename(job.filepath)}`);
         const encodedExists = await fs.pathExists(encodedPath);
 
         if (job.status === "uploading" && encodedExists) {

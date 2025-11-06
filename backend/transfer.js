@@ -9,19 +9,11 @@ const { logger } = require("./utils");
 class TransferManager {
   constructor(config) {
     this.config = config;
-    this.transferMethod = config.transfer_method || "sftp"; // 'sftp', 'webdav', 'auto'
+    this.transferMethod = config.remote?.transfer_method || "sftp"; // 'sftp', 'webdav', 'auto'
 
     // Initialize both managers
     this.sftpManager = new SftpManager(config);
-
-    // WebDAV config
-    const webdavConfig = {
-      webdav_url: config.webdav_url || "http://ds10256.seedhost.eu:13888",
-      webdav_user: config.webdav_user || "sharkdav",
-      webdav_password: config.webdav_password || "sharkdav",
-      remote_path: config.webdav_path || "/data",
-    };
-    this.webdavManager = new WebDAVManager(webdavConfig);
+    this.webdavManager = new WebDAVManager(config);
 
     this.connected = false;
     this.activeMethod = null; // Currently active method
@@ -253,8 +245,10 @@ class TransferManager {
 
   /**
    * Get file statistics
+   * @param {string} remotePath - Remote file path
+   * @param {boolean} silent - If true, don't log 404 errors (used for existence checks)
    */
-  async stat(remotePath) {
+  async stat(remotePath, silent = false) {
     await this.ensureConnection();
 
     try {
@@ -264,7 +258,10 @@ class TransferManager {
         return await this.sftpManager.sftp.stat(remotePath);
       }
     } catch (error) {
-      logger.error("Failed to stat file:", error);
+      // Don't log 404 errors when doing silent existence checks
+      if (!silent || (error.status !== 404 && !error.message?.includes("No such file"))) {
+        logger.error("Failed to stat file:", error);
+      }
       throw error;
     }
   }
@@ -274,7 +271,7 @@ class TransferManager {
    */
   async exists(remotePath) {
     try {
-      await this.stat(remotePath);
+      await this.stat(remotePath, true); // Silent mode - don't log 404 errors
       return true;
     } catch (error) {
       return false;

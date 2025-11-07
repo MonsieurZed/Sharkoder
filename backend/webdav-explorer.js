@@ -267,28 +267,29 @@ class WebDAVExplorer {
    * Recursively scans the folder
    * Optimized with parallel processing for better performance
    */
-  async getFolderStats(remotePath = "/") {
+  async getFolderStats(remotePath = "/", includeDuration = false) {
     await this.ensureConnection();
 
     try {
       const basePath = this.config.remote.webdav.path || this.config.remote.sftp.path || "/";
       const fullPath = remotePath === "/" ? basePath : path.posix.join(basePath, remotePath);
 
-      logger.debug(`Calculating folder stats for: ${fullPath}`);
+      logger.debug(`Calculating folder stats for: ${fullPath} (includeDuration: ${includeDuration})`);
 
       let failedDirs = [];
-      const MAX_PARALLEL = 20; // Process up to 5 directories in parallel
+      const MAX_PARALLEL = 20; // Process up to 20 directories in parallel
 
       const scanDirectory = async (dirPath, depth = 0) => {
         // Limite de profondeur pour éviter les boucles infinies
         if (depth > 20) {
           logger.warn(`Maximum depth reached for ${dirPath}, skipping`);
-          return { totalSize: 0, fileCount: 0, videoCount: 0 };
+          return { totalSize: 0, fileCount: 0, videoCount: 0, totalDuration: 0 };
         }
 
         let localTotalSize = 0;
         let localFileCount = 0;
         let localVideoCount = 0;
+        let localTotalDuration = 0;
 
         try {
           // Utiliser retry avec backoff pour les requêtes WebDAV
@@ -322,6 +323,19 @@ class WebDAVExplorer {
 
               if (isVideoFile(itemName)) {
                 localVideoCount++;
+
+                // Get duration if requested
+                if (includeDuration) {
+                  try {
+                    const videoInfo = await this.getVideoInfo(item.filename);
+                    if (videoInfo && videoInfo.duration) {
+                      localTotalDuration += videoInfo.duration;
+                    }
+                  } catch (err) {
+                    // Skip files that fail to get duration
+                    logger.debug(`Failed to get duration for ${item.filename}: ${err.message}`);
+                  }
+                }
               }
             }
           }
@@ -335,7 +349,7 @@ class WebDAVExplorer {
                   scanDirectory(subDir, depth + 1).catch((error) => {
                     failedDirs.push(subDir);
                     logger.warn(`Could not scan directory ${subDir}:`, error.message);
-                    return { totalSize: 0, fileCount: 0, videoCount: 0 };
+                    return { totalSize: 0, fileCount: 0, videoCount: 0, totalDuration: 0 };
                   })
                 )
               );
@@ -345,6 +359,7 @@ class WebDAVExplorer {
                 localTotalSize += result.totalSize;
                 localFileCount += result.fileCount;
                 localVideoCount += result.videoCount;
+                localTotalDuration += result.totalDuration || 0;
               }
             }
           }
@@ -353,15 +368,27 @@ class WebDAVExplorer {
           logger.warn(`Could not scan directory ${dirPath}:`, error.message);
         }
 
-        return { totalSize: localTotalSize, fileCount: localFileCount, videoCount: localVideoCount };
+        return {
+          totalSize: localTotalSize,
+          fileCount: localFileCount,
+          videoCount: localVideoCount,
+          totalDuration: localTotalDuration,
+        };
       };
 
       const result = await scanDirectory(fullPath);
       const totalSize = result.totalSize;
       const fileCount = result.fileCount;
       const videoCount = result.videoCount;
+      const totalDuration = result.totalDuration || 0;
 
       const avgSize = fileCount > 0 ? Math.round(totalSize / fileCount) : 0;
+
+      // Calculate size per hour if duration is available
+      const sizePerHour = totalDuration > 0 ? Math.round((totalSize / totalDuration) * 3600) : 0;
+
+      // Format duration as "XXh YYm"
+      const totalDurationFormatted = totalDuration > 0 ? `${Math.floor(totalDuration / 3600)}h${Math.floor((totalDuration % 3600) / 60)}m` : null;
 
       const stats = {
         totalSize,
@@ -372,6 +399,14 @@ class WebDAVExplorer {
         avgSizeFormatted: formatBytes(avgSize),
         failedDirs: failedDirs.length > 0 ? failedDirs : undefined, // Directories that couldn't be scanned
       };
+
+      // Add duration fields only if requested
+      if (includeDuration && totalDuration > 0) {
+        stats.totalDuration = totalDuration;
+        stats.totalDurationFormatted = totalDurationFormatted;
+        stats.sizePerHour = sizePerHour;
+        stats.sizePerHourFormatted = formatBytes(sizePerHour) + "/h";
+      }
 
       if (failedDirs.length > 0) {
         logger.warn(`Completed with ${failedDirs.length} failed directories: ${failedDirs.join(", ")}`);

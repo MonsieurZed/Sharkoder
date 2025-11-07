@@ -155,6 +155,11 @@ const initDatabase = async () => {
       /* Column already exists */
     }
     try {
+      db.run("ALTER TABLE jobs ADD COLUMN server_encoded_path TEXT");
+    } catch (e) {
+      /* Column already exists */
+    }
+    try {
       db.run("ALTER TABLE jobs ADD COLUMN encoding_params TEXT");
     } catch (e) {
       /* Column already exists */
@@ -470,6 +475,9 @@ const markJobCompleted = async (jobId, codecAfter = null, backupPaths = {}) => {
   }
   if (backupPaths.serverBackup) {
     updates.server_backup_path = backupPaths.serverBackup;
+  }
+  if (backupPaths.serverEncoded) {
+    updates.server_encoded_path = backupPaths.serverEncoded;
   }
 
   return updateJob(jobId, updates);

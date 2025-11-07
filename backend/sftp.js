@@ -29,16 +29,7 @@
 const SftpClient = require("ssh2-sftp-client");
 const path = require("path");
 const fs = require("fs-extra");
-const { logger, retry, isVideoFile, formatBytes, isNetworkError } = require("./utils");
-
-/**
- * Generate backup filename: <filename>.bak.<ext>
- * Example: video.mkv -> video.bak.mkv
- */
-function getBackupPath(originalPath) {
-  const parsedPath = path.posix.parse(originalPath);
-  return path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
-}
+const { logger, retry, isVideoFile, formatBytes, isNetworkError, getBackupPath } = require("./utils");
 
 class SftpManager {
   constructor(config) {

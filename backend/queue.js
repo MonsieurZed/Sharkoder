@@ -29,7 +29,7 @@ const path = require("path");
 const fs = require("fs-extra");
 const { VideoEncoder } = require("./encode");
 const { createJob, updateJob, getJobsByStatus, markJobStarted, markJobCompleted, markJobFailed, getAllJobs, deleteJob, removeFromQueue, getJobStats } = require("./db");
-const { logger, ensureSpaceAvailable, calculateFileHash, createBackupPath, formatBytes, retry, sleep, safeFileMove, safeFileDelete } = require("./utils");
+const { logger, ensureSpaceAvailable, calculateFileHash, createBackupPath, formatBytes, retry, sleep, safeFileMove, safeFileDelete, generateOutputFilename } = require("./utils");
 
 class QueueManager extends EventEmitter {
   constructor(config, transferManager) {
@@ -125,7 +125,7 @@ class QueueManager extends EventEmitter {
     logger.info("Queue manager stopped - All jobs reset to waiting");
   }
 
-  // Generate new filename with encoding parameters
+  // Generate new filename with encoding parameters and codec format
   generateEncodedFilename(originalPath, codecAfter) {
     // Normalize path to use forward slashes (Unix style) for server paths
     const normalizedPath = originalPath.replace(/\\/g, "/");
@@ -134,41 +134,23 @@ class QueueManager extends EventEmitter {
     const dir = lastSlash >= 0 ? normalizedPath.substring(0, lastSlash) : "";
     const filename = lastSlash >= 0 ? normalizedPath.substring(lastSlash + 1) : normalizedPath;
 
-    const lastDot = filename.lastIndexOf(".");
-    const baseName = lastDot >= 0 ? filename.substring(0, lastDot) : filename;
-    const ext = lastDot >= 0 ? filename.substring(lastDot) : "";
+    // Get release tag from config (default: Z3D)
+    const releaseTag = this.config.advanced?.behavior?.release_tag || "Z3D";
 
-    // Get release tag from config (default: TaG)
-    const releaseTag = this.config.advanced?.release_tag || "TaG";
+    // Determine codec family from config
+    const videoCodec = this.config.ffmpeg?.video_codec || "hevc_nvenc";
+    const codecFamily = videoCodec.includes("vp9") ? "VP9" : "HEVC";
 
-    // Replace all old codec formats with x265
-    let newBaseName = baseName
-      .replace(/\[([^\]]*)(x265|x264|h264|h265|h\.264|h\.265|hevc|HEVC|av1|AV1|avc|AVC|vp9|VP9)([^\]]*)\]/gi, "[x265]")
-      .replace(/\b(x265|x264|h264|h265|h\.264|h\.265|hevc|HEVC|av1|AV1|avc|AVC|vp9|VP9)\b/gi, "x265");
+    // Get audio codec from config
+    const audioCodec = this.config.ffmpeg?.audio_codec || "copy";
 
-    // Check if filename has pattern: name[codec]-TAG.ext
-    const tagPattern = /\[x265\]-([^.]+)$/i;
-    const tagMatch = newBaseName.match(tagPattern);
+    // Use the new generateOutputFilename utility
+    const newFilename = generateOutputFilename(filename, codecFamily, releaseTag, audioCodec);
 
-    if (tagMatch) {
-      // Replace existing tag with configured tag
-      newBaseName = newBaseName.replace(tagPattern, `[x265]-${releaseTag}`);
-      logger.debug(`Replaced tag: ${tagMatch[1]} → ${releaseTag}`);
-    } else {
-      // Check if it ends with [x265] without tag
-      if (/\[x265\]$/i.test(newBaseName)) {
-        // Add tag after [x265]
-        newBaseName = newBaseName.replace(/\[x265\]$/i, `[x265]-${releaseTag}`);
-        logger.debug(`Added tag after [x265]: ${releaseTag}`);
-      } else {
-        // No [codec] pattern, just add tag before extension
-        newBaseName = `${newBaseName}-${releaseTag}`;
-        logger.debug(`Added tag at end: ${releaseTag}`);
-      }
-    }
+    logger.debug(`Generated filename: ${filename} → ${newFilename} (codec: ${codecFamily}, audio: ${audioCodec}, tag: ${releaseTag})`);
 
     // Always return with forward slashes for server paths
-    return dir ? `${dir}/${newBaseName}${ext}` : `${newBaseName}${ext}`;
+    return dir ? `${dir}/${newFilename}` : newFilename;
   }
 
   pause() {

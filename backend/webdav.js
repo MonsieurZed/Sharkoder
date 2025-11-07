@@ -34,19 +34,10 @@
 
 const path = require("path");
 const fs = require("fs-extra");
-const { logger, formatBytes, isVideoFile } = require("./utils");
+const { logger, formatBytes, isVideoFile, getBackupPath } = require("./utils");
 
 // WebDAV client (lazy loaded as ES module)
 let webdavModule = null;
-
-/**
- * Generate backup filename: <filename>.bak.<ext>
- * Example: video.mkv -> video.bak.mkv
- */
-function getBackupPath(originalPath) {
-  const parsedPath = path.posix.parse(originalPath);
-  return path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
-}
 
 class WebDAVManager {
   constructor(config) {
@@ -138,6 +129,7 @@ class WebDAVManager {
           // If remotePath is "movies", item should return path "movies/2024"
           const itemName = path.basename(item.filename);
           const itemPath = remotePath ? path.posix.join(remotePath, itemName) : itemName;
+          const isVideo = item.type !== "directory" && isVideoFile(itemName);
 
           return {
             name: itemName,
@@ -145,11 +137,12 @@ class WebDAVManager {
             type: item.type === "directory" ? "directory" : "file",
             size: item.size || 0,
             modified: item.lastmod,
+            isVideo: isVideo, // Add isVideo flag for frontend
           };
         })
         .filter((item) => {
           // Show all directories, but only video files
-          return item.type === "directory" || isVideoFile(item.name);
+          return item.type === "directory" || item.isVideo;
         });
 
       logger.info(`Listed ${items.length} items in ${fullPath} (video files and directories only)`);
@@ -579,6 +572,9 @@ class WebDAVManager {
       const url = new URL(webdavUrl);
       const fileUrl = `${url.protocol}//${webdavUser}:${webdavPass}@${url.host}${fullPath}`;
 
+      logger.debug(`[getVideoInfo] Probing: ${remotePath}`);
+      logger.debug(`[getVideoInfo] Full path: ${fullPath}`);
+
       return new Promise((resolve, reject) => {
         ffmpeg.ffprobe(fileUrl, (err, metadata) => {
           if (err) {
@@ -608,7 +604,7 @@ class WebDAVManager {
           // Get container format
           const container = metadata.format.format_name?.split(",")[0] || null;
 
-          resolve({
+          const videoInfo = {
             codec: videoStream?.codec_name || "unknown",
             audio: audioStreams.length,
             subtitles: subtitleStreams.length,
@@ -617,7 +613,10 @@ class WebDAVManager {
             resolution: resolution,
             audioCodec: audioCodec,
             container: container,
-          });
+          };
+
+          logger.debug(`[getVideoInfo] Success: ${remotePath} -> codec=${videoInfo.codec}, res=${videoInfo.resolution}`);
+          resolve(videoInfo);
         });
       });
     } catch (error) {

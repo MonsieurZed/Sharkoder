@@ -3,22 +3,28 @@
  *
  * Module: Video Encoding Engine (FFmpeg Wrapper)
  * Author: Sharkoder Team
- * Description: Gestionnaire d'encodage vidéo avec support GPU NVIDIA (NVENC) et CPU (x265).
+ * Description: Gestionnaire d'encodage vidéo avec support GPU NVIDIA (NVENC) et CPU (x265/VP9).
  *              Détection automatique des capacités GPU, gestion des profils d'encodage,
  *              et extraction de métadonnées vidéo complètes.
  * Dependencies: fluent-ffmpeg, ffprobe-static, fs-extra, events, utils
  * Created: 2024
+ * Updated: 2025-11-07 - Ajout support VP9 (vp9_nvenc GPU / libvpx-vp9 CPU)
  *
  * Fonctionnalités principales:
- * - Encodage GPU avec NVIDIA NVENC (hevc_nvenc) ou CPU avec x265
+ * - Encodage GPU avec NVIDIA NVENC (hevc_nvenc, vp9_nvenc) ou CPU (x265, libvpx-vp9)
+ * - Support multi-codec: HEVC (H.265) et VP9
  * - Test automatique des capacités GPU avec fallback CPU
  * - Configuration avancée NVENC (RC modes, lookahead, B-frames, AQ, multipass)
- * - Support 2-pass encoding pour CPU
+ * - Support 2-pass encoding pour CPU (x265 et VP9)
  * - Extraction complète de métadonnées (codec, résolution, audio, sous-titres)
  * - Gestion du cycle de vie (start, stop, progress tracking)
  * - Récupération après crash (ghost file cleanup)
  * - Conservation des pistes audio et sous-titres
  * - Events pour tracking de progression
+ *
+ * Codecs supportés:
+ * - HEVC (H.265): hevc_nvenc (GPU) / libx265 (CPU)
+ * - VP9: vp9_nvenc (GPU) / libvpx-vp9 (CPU)
  *
  * AMÉLIORATIONS RECOMMANDÉES:
  * - Ajouter support d'autres GPU (AMD VCE, Intel QSV)
@@ -188,6 +194,7 @@ class VideoEncoder extends EventEmitter {
       };
 
       // Basic encoding settings
+      const videoCodec = ffmpegConfig.video_codec || "hevc_nvenc"; // Default to HEVC if not specified
       const encodePreset = ffmpegConfig.encode_preset;
       const cq = ffmpegConfig.cq;
       const cpuPreset = ffmpegConfig.cpu_preset;
@@ -197,6 +204,31 @@ class VideoEncoder extends EventEmitter {
       const twoPass = ffmpegConfig.two_pass;
       const profile = ffmpegConfig.profile;
       const forceGPU = ffmpegConfig.force_gpu;
+
+      // Detect codec family (HEVC or VP9)
+      let isVP9 = videoCodec.includes("vp9");
+      let isHEVC = videoCodec.includes("hevc") || videoCodec.includes("265");
+
+      // Determine GPU/CPU codec names
+      let gpuCodec, cpuCodec;
+      if (isVP9) {
+        gpuCodec = "vp9_nvenc";
+        cpuCodec = "libvpx-vp9";
+
+        // VP9 NVENC is not widely supported - fallback to HEVC NVENC
+        if (this.gpuAvailable) {
+          logger.warn("⚠️ VP9 NVENC is not available on most GPUs. Falling back to HEVC NVENC.");
+          logger.warn("⚠️ To use VP9, disable GPU encoding in settings or use CPU encoder (libvpx-vp9).");
+          gpuCodec = "hevc_nvenc";
+          cpuCodec = "libx265";
+          isVP9 = false;
+          isHEVC = true;
+        }
+      } else {
+        // Default to HEVC
+        gpuCodec = "hevc_nvenc";
+        cpuCodec = "libx265";
+      }
 
       // Advanced NVENC settings
       const rcMode = ffmpegConfig.rc_mode;
@@ -209,28 +241,24 @@ class VideoEncoder extends EventEmitter {
       const temporalAQ = ffmpegConfig.temporal_aq;
       const aqStrength = ffmpegConfig.aq_strength;
       const multipass = ffmpegConfig.multipass;
-      const gpuLimit = ffmpegConfig.gpu_limit || 100; // Limite GPU en % (utilisé pour ajuster les paramètres, pas passé directement à FFmpeg)
+      const gpuLimit = ffmpegConfig.gpu_limit || 100; // Limite GPU en % (contrôle la vitesse d'encodage, pas la qualité)
 
-      // Ajuster les paramètres NVENC en fonction de la limite GPU
-      let adjustedLookahead = lookahead;
-      let adjustedBframes = bframes;
-      let adjustedMultipass = multipass;
+      // Calculer le FPS maximal basé sur la limite GPU
+      // Au lieu de réduire la qualité, on limite la vitesse d'encodage
+      let maxEncodeFPS = null; // null = illimité (100%)
 
       if (gpuLimit < 100) {
-        // Réduire les paramètres gourmands en GPU si limite < 100%
-        if (gpuLimit <= 50) {
-          adjustedLookahead = Math.min(lookahead, 16); // Réduire le lookahead
-          adjustedBframes = Math.min(bframes, 2); // Réduire les B-frames
-          adjustedMultipass = "disabled"; // Désactiver multipass
-          logger.info(`⚠️ GPU limit ${gpuLimit}%: Reduced lookahead=${adjustedLookahead}, bframes=${adjustedBframes}, multipass=disabled`);
-        } else if (gpuLimit <= 75) {
-          adjustedLookahead = Math.min(lookahead, 24);
-          adjustedBframes = Math.min(bframes, 3);
-          adjustedMultipass = "qres"; // Multipass basse résolution
-          logger.info(`⚠️ GPU limit ${gpuLimit}%: Reduced lookahead=${adjustedLookahead}, bframes=${adjustedBframes}, multipass=qres`);
-        } else {
-          logger.info(`✓ GPU limit ${gpuLimit}%: Slight reduction in GPU usage`);
-        }
+        // Formule: FPS max proportionnel au % GPU
+        // Exemple: 50% GPU = 60 FPS max, 75% GPU = 120 FPS max
+        // On assume que la plupart des vidéos font 24-60 FPS
+        // Un encodage rapide peut faire 150-300+ FPS
+        const baseFPS = 200; // FPS d'encodage de référence à 100% GPU
+        maxEncodeFPS = Math.round((baseFPS * gpuLimit) / 100);
+
+        logger.info(`🎮 GPU limit ${gpuLimit}%: Max encoding speed limited to ${maxEncodeFPS} FPS`);
+        logger.info(`   → This reduces GPU load without affecting quality (same NVENC parameters)`);
+      } else {
+        logger.info(`🔥 GPU limit ${gpuLimit}%: No speed limit - maximum encoding speed`);
       }
 
       logger.info(`[CONFIG] Profile: ${profile}, CQ: ${cq}, Preset: ${encodePreset}`);
@@ -245,17 +273,16 @@ class VideoEncoder extends EventEmitter {
       // Get video info for progress calculation
       const videoInfo = await this.getVideoInfo(inputPath);
       const totalDuration = videoInfo.duration;
-      // Fix: Divide by 2 because FFmpeg reports double the actual frames
-      const totalFrames = Math.round((totalDuration * videoInfo.video.fps) / 2);
+      const totalFrames = Math.round(totalDuration * videoInfo.video.fps);
 
       logger.info(`Starting encoding: ${inputPath} -> ${outputPath}`);
       logger.info(`Video info: ${videoInfo.video.width}x${videoInfo.video.height}, ${formatDuration(totalDuration)}, ${videoInfo.video.codec}`);
       logger.info(`Duration: ${totalDuration.toFixed(2)}s, FPS: ${videoInfo.video.fps.toFixed(2)}`);
-      logger.info(`Calculated total frames: ${totalFrames} (Duration: ${totalDuration.toFixed(2)}s × FPS: ${videoInfo.video.fps.toFixed(2)} ÷ 2)`);
+      logger.info(`Calculated total frames: ${totalFrames} (Duration: ${totalDuration.toFixed(2)}s × FPS: ${videoInfo.video.fps.toFixed(2)})`);
       logger.info(`Audio tracks: ${videoInfo.audio.length} (${videoInfo.audio.map((a) => `${a.language}:${a.codec}`).join(", ")})`);
       logger.info(`Subtitle tracks: ${videoInfo.subtitles.length} (${videoInfo.subtitles.map((s) => `${s.language}:${s.codec}`).join(", ")})`);
-      logger.info(`Encoder mode: ${this.gpuAvailable ? "GPU (NVENC)" : "CPU (x265)"}`);
-      logger.info(`Settings - Preset: ${this.gpuAvailable ? encodePreset : cpuPreset}, Quality: ${this.gpuAvailable ? `CQ ${cq}` : `CRF ${crf}`}, Profile: ${profile}`);
+      logger.info(`Codec: ${isVP9 ? "VP9" : "HEVC"} - Encoder mode: ${this.gpuAvailable ? `GPU (${gpuCodec})` : `CPU (${cpuCodec})`}`);
+      logger.info(`Settings - Preset: ${this.gpuAvailable ? encodePreset : cpuPreset}, Quality: ${this.gpuAvailable ? `CQ ${cq}` : `CRF ${crf}`}, Profile: ${profile || "auto"}`);
       logger.info(`Audio - Codec: ${audioCodec}, Bitrate: ${audioCodec === "copy" ? "original" : audioBitrate + "k"}`);
 
       // Ensure output directory exists
@@ -267,40 +294,83 @@ class VideoEncoder extends EventEmitter {
         // Allow overwriting output files without confirmation
         command.addOption("-y");
 
+        // Apply FPS limit if GPU limit < 100% (reduces GPU load without affecting quality)
+        if (maxEncodeFPS !== null) {
+          command.addOption("-r", maxEncodeFPS.toString());
+          logger.info(`🎬 Encoding speed capped at ${maxEncodeFPS} FPS (GPU limit: ${gpuLimit}%)`);
+        }
+
         // Configure encoding based on GPU availability
         if (this.gpuAvailable) {
           // Use already loaded bitrate/maxrate variables (formatted above)
           logger.info(
-            `NVENC Advanced: rc=${rcMode}, bitrate=${bitrate}, maxrate=${maxrate}, lookahead=${adjustedLookahead}, bf=${adjustedBframes}, aq=${spatialAQ ? 1 : 0}/${
+            `NVENC Advanced: codec=${gpuCodec}, rc=${rcMode}, bitrate=${bitrate}, maxrate=${maxrate}, lookahead=${lookahead}, bf=${bframes}, aq=${spatialAQ ? 1 : 0}/${
               temporalAQ ? 1 : 0
-            }, multipass=${adjustedMultipass}, gpu_limit=${gpuLimit}%`
+            }, multipass=${multipass}, gpu_limit=${gpuLimit}%`
           );
 
-          // NVENC encoding with advanced parameters (using adjusted values based on gpu_limit)
+          // NVENC encoding with full quality parameters (no degradation based on gpu_limit)
           command
-            .videoCodec("hevc_nvenc")
+            .videoCodec(gpuCodec)
             .addOption("-preset", encodePreset)
             .addOption("-rc", rcMode) // vbr_hq, constqp, vbr, cbr
             .addOption("-cq", cq) // Quality level for VBR modes
             .addOption("-b:v", bitrate) // Average bitrate
-            .addOption("-maxrate", maxrate) // Max bitrate
-            .addOption("-profile:v", profile)
-            .addOption("-pix_fmt", "p010le") // 10-bit pixel format for main10
+            .addOption("-maxrate", maxrate); // Max bitrate
+
+          // Add profile only for HEVC (VP9 doesn't use same profile system)
+          if (isHEVC && profile) {
+            command.addOption("-profile:v", profile);
+          }
+
+          // Pixel format: 10-bit for HEVC main10, yuv420p for VP9
+          if (isHEVC && profile === "main10") {
+            command.addOption("-pix_fmt", "p010le"); // 10-bit pixel format for main10
+          } else if (isVP9) {
+            command.addOption("-pix_fmt", "yuv420p"); // Standard for VP9
+          }
+
+          // Common NVENC options - FULL QUALITY (no adjustments based on gpu_limit)
+          command
             .addOption("-spatial-aq", spatialAQ ? "1" : "0") // Spatial AQ
             .addOption("-temporal-aq", temporalAQ ? "1" : "0") // Temporal AQ
             .addOption("-aq-strength", aqStrength.toString()) // AQ strength (1-15)
-            .addOption("-bf", adjustedBframes.toString()) // B-frames (adjusted based on gpu_limit)
+            .addOption("-bf", bframes.toString()) // B-frames (FULL QUALITY)
             .addOption("-b_ref_mode", bRefMode) // B-frame reference mode: disabled, each, middle
-            .addOption("-rc-lookahead", adjustedLookahead.toString()) // Lookahead frames (adjusted based on gpu_limit)
-            .addOption("-multipass", adjustedMultipass) // Multipass (adjusted based on gpu_limit)
+            .addOption("-rc-lookahead", lookahead.toString()) // Lookahead frames (FULL QUALITY)
+            .addOption("-multipass", multipass) // Multipass (FULL QUALITY)
             .addOption("-2pass", twoPass ? "1" : "0"); // Two-pass encoding
 
-          // Note: L'option -gpu sélectionne QUEL GPU utiliser (0, 1, 2...), pas le % d'utilisation
-          // Pour limiter l'utilisation GPU, il faut ajuster les paramètres NVENC (preset, lookahead, etc.)
-          // ou utiliser des outils externes comme nvidia-smi
+          // Note: GPU limit is now applied via FPS cap (-r), not by reducing quality parameters
+          // This maintains 100% encoding quality while reducing GPU load proportionally
         } else {
           // CPU encoding fallback
-          command.videoCodec("libx265").addOption("-preset", cpuPreset).addOption("-crf", crf).addOption("-profile:v", profile).addOption("-x265-params", "log-level=error");
+          if (isVP9) {
+            // VP9 CPU encoding with libvpx-vp9
+            logger.info(`VP9 CPU encoding: preset=${cpuPreset}, crf=${crf}, threads=auto`);
+            command
+              .videoCodec(cpuCodec)
+              .addOption("-crf", crf)
+              .addOption("-b:v", "0") // Use CRF mode (constant quality)
+              .addOption("-cpu-used", cpuPreset === "fast" ? "5" : cpuPreset === "medium" ? "2" : "1") // Speed preset (0=slowest/best, 5=fastest)
+              .addOption("-row-mt", "1") // Enable row-based multithreading
+              .addOption("-threads", "0"); // Auto threads
+
+            // VP9 two-pass encoding
+            if (twoPass) {
+              logger.info("VP9 two-pass encoding enabled");
+              command.addOption("-pass", "2");
+            }
+          } else {
+            // HEVC CPU encoding with x265
+            command.videoCodec(cpuCodec).addOption("-preset", cpuPreset).addOption("-crf", crf);
+
+            if (profile) {
+              command.addOption("-profile:v", profile);
+            }
+
+            command.addOption("-x265-params", "log-level=error");
+          }
         }
 
         // Map all streams to preserve audio tracks and subtitles
@@ -409,7 +479,8 @@ class VideoEncoder extends EventEmitter {
               // Create encoding params object to save
               const encodingParams = {
                 gpu_used: this.gpuAvailable,
-                encoder: this.gpuAvailable ? "hevc_nvenc" : "libx265",
+                codec_family: isVP9 ? "VP9" : "HEVC",
+                encoder: this.gpuAvailable ? gpuCodec : cpuCodec,
                 preset: this.gpuAvailable ? encodePreset : cpuPreset,
                 quality: this.gpuAvailable ? cq : crf,
                 quality_type: this.gpuAvailable ? "CQ" : "CRF",

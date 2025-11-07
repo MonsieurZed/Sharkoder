@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   webdavConnect: () => ipcRenderer.invoke("webdav:connect"),
   webdavDisconnect: () => ipcRenderer.invoke("webdav:disconnect"),
   webdavListDirectory: (remotePath, includeVideoInfo) => ipcRenderer.invoke("webdav:listDirectory", remotePath, includeVideoInfo),
-  webdavGetFolderStats: (remotePath) => ipcRenderer.invoke("webdav:getFolderStats", remotePath),
+  webdavGetFolderStats: (remotePath, includeDuration) => ipcRenderer.invoke("webdav:getFolderStats", remotePath, includeDuration),
   webdavScanFolderRecursive: (remotePath) => ipcRenderer.invoke("webdav:scanFolderRecursive", remotePath),
   webdavGetFileInfo: (remotePath) => ipcRenderer.invoke("webdav:getFileInfo", remotePath),
   webdavDelete: (remotePath, isDirectory) => ipcRenderer.invoke("webdav:delete", remotePath, isDirectory),

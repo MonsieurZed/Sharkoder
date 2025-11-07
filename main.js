@@ -104,7 +104,7 @@ const createWindow = () => {
   // Load the app
   mainWindow.loadFile("renderer/index.html");
 
-  // Open DevTools to debug (disabled in production)
+  // Open DevTools only in development mode
   // mainWindow.webContents.openDevTools();
 
   // Log when page finishes loading
@@ -233,13 +233,21 @@ const setupIpcHandlers = () => {
       const extractDuration = configManager.get("advanced.behavior.extract_video_duration") || false;
 
       if (extractDuration && transferManager.webdavManager) {
+        logger.debug(`[webdav:listDirectory] Enriching ${items.filter((i) => i.isVideo).length} video files with metadata`);
+
         // Enrichir les fichiers vidéo avec leurs métadonnées
         const enrichedItems = await Promise.all(
           items.map(async (item) => {
             if (item.type === "file" && item.isVideo) {
               try {
                 const videoInfo = await transferManager.webdavManager.getVideoInfo(item.path);
-                return { ...item, ...videoInfo };
+                if (videoInfo) {
+                  logger.debug(`[webdav:listDirectory] Enriched ${item.name} with metadata`);
+                  return { ...item, ...videoInfo };
+                } else {
+                  logger.debug(`[webdav:listDirectory] No metadata for ${item.name}`);
+                  return item;
+                }
               } catch (error) {
                 logger.debug(`Could not get video info for ${item.path}:`, error.message);
                 return item;
@@ -260,6 +268,7 @@ const setupIpcHandlers = () => {
 
   ipcMain.handle("webdav:getFolderStats", async (event, remotePath, includeDuration = false) => {
     try {
+      logger.debug(`[IPC] webdav:getFolderStats called with remotePath=${remotePath}, includeDuration=${includeDuration}`);
       await transferManager.ensureConnection();
       const stats = await transferManager.webdavManager.getFolderStats(remotePath || "/", includeDuration);
       return { success: true, stats };
@@ -925,14 +934,14 @@ const setupIpcHandlers = () => {
       const { spawn } = require("child_process");
 
       // MPV command: Split-screen comparison with separator line
-      // Top half = Original, Bottom half = Encoded
+      // Top half = Original, Bottom half = Encoded (flipped vertically)
       // Adds a black line between the two halves
       const mpvArgs = [
-        "--lavfi-complex=[vid1]crop=iw:ih/2:0:0[top];[vid2]crop=iw:ih/2:0:ih/2[bottom];[top][bottom]vstack[stacked];[stacked]drawbox=x=0:y=ih/2-1:w=iw:h=2:color=black:t=fill[vo]",
+        "--lavfi-complex=[vid1]crop=iw:ih/2:0:0[top];[vid2]vflip,crop=iw:ih/2:0:ih/2[bottom];[top][bottom]vstack[stacked];[stacked]drawbox=x=0:y=ih/2-1:w=iw:h=2:color=black:t=fill[vo]",
         `--external-file=${encodedPath}`,
         "--no-config",
         "--osd-level=1",
-        "--osd-msg1=Top: Original | Bottom: Encoded",
+        "--osd-msg1=Top: Original | Bottom: Encoded (flipped)",
         originalPath,
       ];
 
@@ -995,14 +1004,14 @@ const setupIpcHandlers = () => {
       const { spawn } = require("child_process");
 
       // MPV command: Side-by-side comparison with separator line
-      // Left half = Original, Right half = Encoded
+      // Left half = Original, Right half = Encoded (flipped horizontally)
       // Adds a black vertical line between the two halves
       const mpvArgs = [
-        "--lavfi-complex=[vid1]crop=iw/2:ih:0:0[left];[vid2]crop=iw/2:ih:iw/2:0[right];[left][right]hstack[stacked];[stacked]drawbox=x=iw/2-1:y=0:w=2:h=ih:color=black:t=fill[vo]",
+        "--lavfi-complex=[vid1]crop=iw/2:ih:0:0[left];[vid2]hflip,crop=iw/2:ih:iw/2:0[right];[left][right]hstack[stacked];[stacked]drawbox=x=iw/2-1:y=0:w=2:h=ih:color=black:t=fill[vo]",
         `--external-file=${encodedPath}`,
         "--no-config",
         "--osd-level=1",
-        "--osd-msg1=Left: Original | Right: Encoded",
+        "--osd-msg1=Left: Original | Right: Encoded (flipped)",
         originalPath,
       ];
 

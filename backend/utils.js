@@ -30,6 +30,7 @@ const fs = require("fs-extra");
 const path = require("path");
 const crypto = require("crypto");
 const { promisify } = require("util");
+const checkDiskSpaceLib = require("check-disk-space").default;
 
 // Logging utility
 class Logger {
@@ -87,30 +88,64 @@ const formatBytes = (bytes, decimals = 2) => {
 };
 
 // Disk space utilities
+/**
+ * Check available disk space for a given directory path
+ * Uses check-disk-space library for cross-platform support (Windows, Linux, macOS)
+ * @param {string} dirPath - Directory path to check (must exist)
+ * @returns {Promise<{free: number, size: number}>} Object with free and total space in bytes
+ * @throws {Error} If path doesn't exist or is not a directory
+ */
 const checkDiskSpace = async (dirPath) => {
   try {
+    // Ensure path exists and is a directory
     const stats = await fs.stat(dirPath);
     if (!stats.isDirectory()) {
-      throw new Error("Path is not a directory");
+      throw new Error(`Path is not a directory: ${dirPath}`);
     }
 
-    // For cross-platform disk space checking, we'll use a simple approach
-    // In production, you might want to use a library like 'check-disk-space'
+    // Use check-disk-space library for accurate cross-platform disk info
+    const diskSpace = await checkDiskSpaceLib(dirPath);
+
+    // Log disk space info for debugging
+    logger.debug(`Disk space for ${dirPath}: ${formatBytes(diskSpace.free)} free / ${formatBytes(diskSpace.size)} total`);
+
     return {
-      free: 50 * 1024 * 1024 * 1024, // Assume 50GB free (placeholder)
-      size: 100 * 1024 * 1024 * 1024, // Assume 100GB total (placeholder)
+      free: diskSpace.free, // Available space in bytes
+      size: diskSpace.size, // Total disk size in bytes
     };
   } catch (error) {
-    logger.error("Failed to check disk space:", error);
+    logger.error(`Failed to check disk space for ${dirPath}:`, error.message);
     throw error;
   }
 };
 
-const ensureSpaceAvailable = async (dirPath, requiredBytes) => {
+/**
+ * Ensure sufficient disk space is available before an operation
+ * Throws an error if insufficient space, preventing disk full errors
+ * @param {string} dirPath - Directory path to check
+ * @param {number} requiredBytes - Required space in bytes
+ * @param {number} [safetyMargin=0.1] - Safety margin as percentage (default 10%)
+ * @returns {Promise<boolean>} True if space available
+ * @throws {Error} If insufficient space with detailed message
+ */
+const ensureSpaceAvailable = async (dirPath, requiredBytes, safetyMargin = 0.1) => {
   const space = await checkDiskSpace(dirPath);
-  if (space.free < requiredBytes) {
-    throw new Error(`Insufficient disk space. Required: ${formatBytes(requiredBytes)}, Available: ${formatBytes(space.free)}`);
+
+  // Add safety margin (default 10% extra)
+  const requiredWithMargin = Math.ceil(requiredBytes * (1 + safetyMargin));
+
+  if (space.free < requiredWithMargin) {
+    const shortfall = requiredWithMargin - space.free;
+    throw new Error(
+      `Espace disque insuffisant!\n` +
+        `  Requis: ${formatBytes(requiredBytes)} (+ ${(safetyMargin * 100).toFixed(0)}% marge = ${formatBytes(requiredWithMargin)})\n` +
+        `  Disponible: ${formatBytes(space.free)}\n` +
+        `  Manquant: ${formatBytes(shortfall)}\n` +
+        `  Chemin: ${dirPath}`
+    );
   }
+
+  logger.debug(`Disk space check OK: ${formatBytes(space.free)} available, ${formatBytes(requiredWithMargin)} required (with margin)`);
   return true;
 };
 
@@ -318,6 +353,173 @@ const validateConfig = (config) => {
   return config;
 };
 
+/**
+ * Generate backup filename: <filename>.bak.<ext>
+ * Used for creating backup files before overwriting originals
+ * Example: video.mkv -> video.bak.mkv
+ * @param {string} originalPath - Original file path (posix format)
+ * @returns {string} Backup path with .bak inserted before extension
+ */
+const getBackupPath = (originalPath) => {
+  const parsedPath = path.posix.parse(originalPath);
+  return path.posix.join(parsedPath.dir, `${parsedPath.name}.bak${parsedPath.ext}`);
+};
+
+/**
+ * Progress Tracker Class
+ * Centralizes progress tracking logic for upload/download operations
+ * Calculates percentage, speed, ETA with consistent formatting
+ */
+class ProgressTracker {
+  constructor() {
+    this.startTime = null;
+    this.lastUpdate = null;
+    this.totalSize = 0;
+    this.transferredSize = 0;
+  }
+
+  /**
+   * Start tracking a new transfer
+   * @param {number} totalSize - Total size in bytes
+   */
+  start(totalSize) {
+    this.startTime = Date.now();
+    this.lastUpdate = this.startTime;
+    this.totalSize = totalSize;
+    this.transferredSize = 0;
+  }
+
+  /**
+   * Update progress and calculate metrics
+   * @param {number} transferredSize - Bytes transferred so far
+   * @returns {Object} Progress metrics (percentage, speed, ETA, etc.)
+   */
+  update(transferredSize) {
+    this.transferredSize = transferredSize;
+    this.lastUpdate = Date.now();
+
+    const elapsed = (this.lastUpdate - this.startTime) / 1000; // seconds
+    const speed = elapsed > 0 ? transferredSize / elapsed : 0;
+    const percentage = this.totalSize > 0 ? (transferredSize / this.totalSize) * 100 : 0;
+    const remaining = this.totalSize - transferredSize;
+    const eta = speed > 0 ? remaining / speed : 0;
+
+    return {
+      percentage: Math.min(percentage, 100),
+      transferred: formatBytes(transferredSize),
+      total: formatBytes(this.totalSize),
+      speed: formatBytes(speed) + "/s",
+      speedRaw: speed,
+      eta: Math.round(eta),
+      etaFormatted: formatDuration(eta),
+      elapsed: Math.round(elapsed),
+      elapsedFormatted: formatDuration(elapsed),
+    };
+  }
+
+  /**
+   * Get current progress without updating transferred size
+   * @returns {Object} Current progress metrics
+   */
+  getProgress() {
+    return this.update(this.transferredSize);
+  }
+
+  /**
+   * Reset tracker to initial state
+   */
+  reset() {
+    this.startTime = null;
+    this.lastUpdate = null;
+    this.totalSize = 0;
+    this.transferredSize = 0;
+  }
+
+  /**
+   * Check if tracking is active
+   * @returns {boolean} True if tracking is in progress
+   */
+  isActive() {
+    return this.startTime !== null;
+  }
+}
+
+/**
+ * Generate output filename with codec format and release tag
+ * Automatically inserts codec format (h265 or vp9) and release tag if not already present
+ * @param {string} originalFilename - Original filename (e.g., "Movie.Title.2024.mkv")
+ * @param {string} codecFamily - Codec family: "HEVC" or "VP9"
+ * @param {string} releaseTag - Release tag to insert (e.g., "Z3D")
+ * @param {string} [audioCodec] - Optional audio codec (e.g., "aac", "opus", "copy")
+ * @returns {string} Formatted filename (e.g., "Movie.Title.2024.h265.Z3D.mkv")
+ *
+ * Examples:
+ * - generateOutputFilename("Movie.2024.mkv", "HEVC", "Z3D") -> "Movie.2024.h265.Z3D.mkv"
+ * - generateOutputFilename("Movie [DTS][x264].mkv", "HEVC", "Z3D", "aac") -> "Movie [AAC][x265]-Z3D.mkv"
+ * - generateOutputFilename("Movie [Atmos][x264]-NEO.mkv", "HEVC", "Z3D", "copy") -> "Movie [Atmos][x265]-Z3D.mkv"
+ */
+const generateOutputFilename = (originalFilename, codecFamily, releaseTag, audioCodec = null) => {
+  const parsedPath = path.parse(originalFilename);
+  let basename = parsedPath.name; // Filename without extension
+  const ext = parsedPath.ext; // Extension with dot (e.g., ".mkv")
+
+  // Determine codec format string
+  const codecFormat = codecFamily === "VP9" ? "vp9" : "x265";
+
+  // Replace ONLY video codec tags in brackets
+  // Pattern matches [x264], [h264], [h.264], [x265], [h265], [h.265], [hevc], [vp9]
+  const codecBracketPattern = /\[(x264|h264|h\.264|x265|h265|h\.265|hevc|vp9)\]/gi;
+
+  let hasCodecBracket = false;
+  basename = basename.replace(codecBracketPattern, (match, codec) => {
+    hasCodecBracket = true;
+    logger.debug(`Replaced video codec tag: ${match} -> [${codecFormat}]`);
+    return `[${codecFormat}]`;
+  });
+
+  // Replace audio codec tags if audioCodec is provided and not "copy"
+  if (audioCodec && audioCodec !== "copy") {
+    // Common audio formats in brackets: [DTS], [DTS 5.1], [DTS-HD], [TrueHD], [Atmos], [AAC], [AC3], [EAC3], [FLAC], [Opus]
+    const audioBracketPattern = /\[(DTS(?:\s*(?:5\.1|7\.1|HD|MA|X))?|TrueHD(?:\s*Atmos)?|Atmos|AAC(?:\s*(?:2\.0|5\.1))?|AC3|EAC3|E-?AC-?3|FLAC|Opus|MP3)(?:\s+\d+\.?\d*\s*(?:ch|channels?)?)?\]/gi;
+
+    const audioFormat =
+      audioCodec.toLowerCase() === "aac"
+        ? "AAC"
+        : audioCodec.toLowerCase() === "opus"
+        ? "Opus"
+        : audioCodec.toLowerCase() === "ac3"
+        ? "AC3"
+        : audioCodec.toLowerCase() === "eac3"
+        ? "EAC3"
+        : audioCodec.toLowerCase() === "flac"
+        ? "FLAC"
+        : audioCodec.toUpperCase();
+
+    basename = basename.replace(audioBracketPattern, (match) => {
+      logger.debug(`Replaced audio codec tag: ${match} -> [${audioFormat}]`);
+      return `[${audioFormat}]`;
+    });
+  }
+
+  // Replace release tags: -TAG at the end (common: -NEO, -RARBG, -YTS, etc.)
+  // Pattern: dash followed by uppercase letters/numbers (2-10 chars) at the end
+  const releaseTagPattern = /-([A-Z0-9]{2,10})$/;
+  const releaseMatch = basename.match(releaseTagPattern);
+
+  if (releaseMatch) {
+    // Replace existing release tag
+    const oldTag = releaseMatch[1];
+    basename = basename.replace(releaseTagPattern, `-${releaseTag}`);
+    logger.debug(`Replaced release tag: ${oldTag} -> ${releaseTag}`);
+  } else {
+    // No release tag found, add it at the end
+    basename = `${basename}-${releaseTag}`;
+    logger.debug(`Added release tag: ${releaseTag}`);
+  }
+
+  return basename + ext;
+};
+
 module.exports = {
   logger,
   formatBytes,
@@ -337,4 +539,7 @@ module.exports = {
   safeJSONParse,
   isNetworkError,
   validateConfig,
+  getBackupPath,
+  generateOutputFilename,
+  ProgressTracker,
 };

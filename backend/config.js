@@ -178,7 +178,6 @@ class ConfigManager {
       },
       remote: {
         transfer_method: "auto",
-        extract_video_duration: false, // Extract video duration during remote statistics (slower)
         sftp: {
           host: "",
           user: "",
@@ -186,7 +185,6 @@ class ConfigManager {
           path: "/",
         },
         webdav: {
-          enabled: false,
           url: "",
           username: "",
           password: "",
@@ -196,7 +194,7 @@ class ConfigManager {
       storage: {
         local_temp: "",
         local_backup: "",
-        default_download_path: "",
+        download_path: "",
       },
       advanced: {
         connection: {
@@ -205,16 +203,13 @@ class ConfigManager {
           retry_attempts: 2,
           connection_timeout: 30000,
         },
-        cleanup: {
-          cleanup_old_jobs_days: 30,
-          cleanup_old_progress_days: 365,
-        },
         behavior: {
           log_level: "info",
           auto_start_queue: false,
           verify_checksums: true,
           create_backups: false,
-          keep_server_backups: false,
+          extract_video_duration: false,
+          release_tag: "",
           keep_encoded: true,
           keep_original: true,
           simulation_mode: false,

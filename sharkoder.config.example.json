@@ -60,8 +60,6 @@
   "remote": {
     "transfer_method": "auto",
     "_transfer_methods": "auto (try WebDAV first, fallback to SFTP), webdav, sftp",
-    "extract_video_duration": false,
-    "_extract_duration_info": "Extract video duration during statistics (slower, requires partial downloads)",
 
     "_comment_sftp": "SFTP Connection Settings",
     "sftp": {
@@ -72,9 +70,8 @@
       "path": "/home/username/media"
     },
 
-    "_comment_webdav": "WebDAV Connection Settings (optional but recommended)",
+    "_comment_webdav": "WebDAV Connection Settings (used when transfer_method is 'webdav' or 'auto')",
     "webdav": {
-      "enabled": true,
       "url": "http://your-server.com:13888",
       "_url_info": "Include http:// or https:// in URL",
       "username": "your-webdav-user",
@@ -89,7 +86,7 @@
     "_local_temp_info": "Temporary storage for downloads and encoding (needs 3x video size free)",
     "local_backup": "C:\\Users\\YourName\\AppData\\Local\\Sharkoder\\backup",
     "_local_backup_info": "Local backups of original and encoded files for comparison",
-    "default_download_path": "C:\\Users\\YourName\\Downloads",
+    "download_path": "C:\\Users\\YourName\\Downloads",
     "_download_path_info": "Where files are downloaded when using the download button",
     "mpv_path": "mpv",
     "_mpv_path_info": "Path to MPV player executable (leave as 'mpv' if in PATH, or full path like 'C:\\Program Files\\mpv\\mpv.exe')"
@@ -109,14 +106,6 @@
       "_timeout_info": "In milliseconds (30000 = 30 seconds)"
     },
 
-    "_comment_cleanup": "Cleanup & Maintenance",
-    "cleanup": {
-      "cleanup_old_jobs_days": 30,
-      "_cleanup_jobs_info": "Days to keep completed/failed jobs in database",
-      "cleanup_old_progress_days": 365,
-      "_cleanup_progress_info": "Days to keep progress files"
-    },
-
     "_comment_behavior": "Behavior & Safety Settings",
     "behavior": {
       "log_level": "info",
@@ -126,9 +115,11 @@
       "verify_checksums": true,
       "_verify_info": "Verify file integrity after transfer",
       "create_backups": false,
-      "_create_backups_info": "Create local backups of original files",
-      "keep_server_backups": false,
-      "_server_backups_info": "Keep backup of original on server",
+      "_create_backups_info": "Create backup of original file on server before replacing (renamed to .bak)",
+      "extract_video_duration": false,
+      "_extract_duration_info": "Extract video duration during statistics (slower, requires partial downloads)",
+      "release_tag": "",
+      "_release_tag_info": "Tag appended to encoded filenames (e.g., 'Z3D', 'PROPER')",
       "keep_encoded": true,
       "_keep_encoded_info": "Keep local copy of encoded file after upload",
       "keep_original": true,

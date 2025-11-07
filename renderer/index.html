@@ -1739,7 +1739,7 @@
                     ) : (
                       <button
                         onClick={async () => {
-                          console.log("🔄 Refresh button clicked - deep exploration with metadata");
+                          console.log("🔄 Refresh button clicked - reloading current directory");
                           setIsRefreshing(true);
 
                           try {
@@ -1747,43 +1747,19 @@
                             setSessionCache({});
                             sessionCacheRef.current = {};
 
-                            // Explore folder recursively with full metadata
-                            const result = await window.api.invoke("webdav:exploreFolderRecursive", currentPath);
-
-                            if (result.success) {
-                              console.log("✅ Deep exploration complete:", result);
-
-                              // Update stats cache with detailed folder stats
-                              if (result.stats) {
-                                const updatedStats = { ...statsCache };
-                                Object.keys(result.stats).forEach((path) => {
-                                  updatedStats[path] = result.stats[path];
-                                });
-                                setStatsCache(updatedStats);
-                                localStorage.setItem("statsCache", JSON.stringify(updatedStats));
-                              }
-
-                              // Reload current directory with force refresh to update UI
-                              await loadFiles(currentPath, true);
-                            } else {
-                              console.error("❌ Deep exploration failed:", result.error);
-                              // Fallback to normal refresh
-                              await loadFiles(currentPath, true);
-                            }
+                            // Reload current directory with force refresh to update UI
+                            await loadFiles(currentPath, true);
 
                             // Refresh all folder stats display
                             await refreshAllFolders();
                           } catch (error) {
-                            console.error("❌ Error during deep refresh:", error);
-                            // Fallback to normal refresh
-                            await loadFiles(currentPath, true);
-                            await refreshAllFolders();
+                            console.error("❌ Error during refresh:", error);
                           } finally {
                             setIsRefreshing(false);
                           }
                         }}
                         className="btn-secondary text-xs"
-                        title="Deep refresh with full metadata exploration"
+                        title="Refresh current directory"
                       >
                         🔄 Refresh
                       </button>
@@ -2197,7 +2173,7 @@
 
                               {/* Tooltip complet avec toutes les infos */}
                               {showTooltip === job.id && (
-                                <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[9999] bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl max-w-4xl max-h-[90vh] overflow-auto">
+                                <div className="fixed left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 z-[9999] bg-gray-900 border-2 border-blue-500 rounded-lg shadow-2xl max-w-6xl max-h-[90vh] overflow-auto">
                                   <div className="sticky top-0 bg-gray-800 border-b border-blue-500 px-4 py-3 flex items-center justify-between">
                                     <h3 className="text-lg font-bold text-blue-400">📊 Complete Encoding Information</h3>
                                     <button onClick={() => setShowTooltip(null)} className="text-gray-400 hover:text-white text-xl leading-none">
@@ -2206,29 +2182,64 @@
                                   </div>
 
                                   <div className="p-4 space-y-4">
-                                    {/* File Path */}
+                                    {/* File Path & Timing */}
                                     <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-                                      <div className="text-yellow-400 font-semibold mb-2">📁 File</div>
-                                      <div className="text-xs text-gray-300 break-all">{job.filepath}</div>
-                                      <div className="text-xs text-gray-400 mt-1">Completed: {formatDate(job.finished_at)}</div>
+                                      <div className="flex items-start justify-between gap-4">
+                                        <div className="flex-1">
+                                          <div className="text-yellow-400 font-semibold mb-2">📁 File</div>
+                                          <div className="text-xs text-gray-300 break-all">{job.filepath}</div>
+                                          <div className="text-xs text-gray-400 mt-1">Completed: {formatDate(job.finished_at)}</div>
+                                        </div>
+                                        {/* Timing Information */}
+                                        <div className="bg-gray-900 rounded-lg p-3 border border-gray-600 min-w-[280px]">
+                                          <div className="text-cyan-400 font-semibold mb-2 text-sm">⏱️ Process Duration</div>
+                                          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                            {(() => {
+                                              const downloadTime = job.download_duration || 0;
+                                              const encodeTime = job.encode_duration || 0;
+                                              const uploadTime = job.upload_duration || 0;
+                                              const totalTime = downloadTime + encodeTime + uploadTime;
+
+                                              const formatDuration = (seconds) => {
+                                                if (!seconds) return "N/A";
+                                                const h = Math.floor(seconds / 3600);
+                                                const m = Math.floor((seconds % 3600) / 60);
+                                                const s = Math.floor(seconds % 60);
+                                                if (h > 0) return `${h}h ${m}m ${s}s`;
+                                                if (m > 0) return `${m}m ${s}s`;
+                                                return `${s}s`;
+                                              };
+
+                                              return (
+                                                <>
+                                                  <div className="text-gray-400">Download:</div>
+                                                  <div className="text-white font-mono text-right">{formatDuration(downloadTime)}</div>
+                                                  <div className="text-gray-400">Encoding:</div>
+                                                  <div className="text-white font-mono text-right">{formatDuration(encodeTime)}</div>
+                                                  <div className="text-gray-400">Upload:</div>
+                                                  <div className="text-white font-mono text-right">{formatDuration(uploadTime)}</div>
+                                                  <div className="text-cyan-400 font-semibold border-t border-gray-700 pt-1">Total:</div>
+                                                  <div className="text-cyan-300 font-mono font-bold text-right border-t border-gray-700 pt-1">{formatDuration(totalTime)}</div>
+                                                </>
+                                              );
+                                            })()}
+                                          </div>
+                                        </div>
+                                      </div>
                                     </div>
 
-                                    {/* Before & After Comparison */}
-                                    <div className="grid grid-cols-2 gap-4">
+                                    {/* Before & After Comparison - Horizontal Layout */}
+                                    <div className="grid grid-cols-3 gap-3">
                                       {/* BEFORE */}
                                       <div className="bg-red-900 bg-opacity-20 border border-red-700 rounded-lg p-3">
-                                        <div className="text-red-400 font-semibold mb-3 flex items-center gap-2">
-                                          <span className="text-xl">📥</span>
-                                          <span>Original File</span>
+                                        <div className="text-red-400 font-semibold mb-3 flex items-center gap-2 text-sm">
+                                          <span className="text-lg">📥</span>
+                                          <span>Original</span>
                                         </div>
-                                        <div className="space-y-2 text-xs">
+                                        <div className="space-y-1.5 text-xs">
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Codec:</span>
                                             <span className="text-white font-mono">{job.codec_before || "N/A"}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Container:</span>
-                                            <span className="text-white font-mono">{job.container || "N/A"}</span>
                                           </div>
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Resolution:</span>
@@ -2242,41 +2253,35 @@
                                           </div>
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Bitrate:</span>
-                                            <span className="text-white font-mono">{job.bitrate ? `${(job.bitrate / 1000000).toFixed(2)} Mbps` : "N/A"}</span>
+                                            <span className="text-white font-mono">{job.bitrate ? `${(job.bitrate / 1000000).toFixed(1)} Mbps` : "N/A"}</span>
                                           </div>
                                           <div className="flex justify-between">
-                                            <span className="text-gray-400">Audio Tracks:</span>
-                                            <span className="text-white font-mono">{job.audio || 0}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Audio Codec:</span>
-                                            <span className="text-white font-mono">{job.audioCodec || "N/A"}</span>
+                                            <span className="text-gray-400">Audio:</span>
+                                            <span className="text-white font-mono">
+                                              {job.audioCodec || "N/A"} ({job.audio || 0})
+                                            </span>
                                           </div>
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Subtitles:</span>
                                             <span className="text-white font-mono">{job.subtitles || 0}</span>
                                           </div>
-                                          <div className="flex justify-between border-t border-red-900 pt-2 mt-2">
+                                          <div className="flex justify-between border-t border-red-900 pt-1.5 mt-1.5">
                                             <span className="text-gray-400 font-semibold">Size:</span>
-                                            <span className="text-white font-mono font-bold">{formatSize(job.size)}</span>
+                                            <span className="text-red-300 font-mono font-bold">{formatSize(job.size)}</span>
                                           </div>
                                         </div>
                                       </div>
 
                                       {/* AFTER */}
                                       <div className="bg-green-900 bg-opacity-20 border border-green-700 rounded-lg p-3">
-                                        <div className="text-green-400 font-semibold mb-3 flex items-center gap-2">
-                                          <span className="text-xl">📤</span>
-                                          <span>Encoded File</span>
+                                        <div className="text-green-400 font-semibold mb-3 flex items-center gap-2 text-sm">
+                                          <span className="text-lg">📤</span>
+                                          <span>Encoded</span>
                                         </div>
-                                        <div className="space-y-2 text-xs">
+                                        <div className="space-y-1.5 text-xs">
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Codec:</span>
                                             <span className="text-white font-mono">{job.codec_after || "HEVC"}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Container:</span>
-                                            <span className="text-white font-mono">MKV</span>
                                           </div>
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Resolution:</span>
@@ -2291,25 +2296,72 @@
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Bitrate:</span>
                                             <span className="text-white font-mono">
-                                              {job.size_after && job.duration ? `${((job.size_after * 8) / (job.duration * 1000000)).toFixed(2)} Mbps` : "N/A"}
+                                              {job.size_after && job.duration ? `${((job.size_after * 8) / (job.duration * 1000000)).toFixed(1)} Mbps` : "N/A"}
                                             </span>
                                           </div>
                                           <div className="flex justify-between">
-                                            <span className="text-gray-400">Audio Tracks:</span>
-                                            <span className="text-white font-mono">{job.audio || "Same"}</span>
-                                          </div>
-                                          <div className="flex justify-between">
-                                            <span className="text-gray-400">Audio Codec:</span>
-                                            <span className="text-white font-mono">{job.audioCodec || "Same"}</span>
+                                            <span className="text-gray-400">Audio:</span>
+                                            <span className="text-white font-mono">Same</span>
                                           </div>
                                           <div className="flex justify-between">
                                             <span className="text-gray-400">Subtitles:</span>
-                                            <span className="text-white font-mono">{job.subtitles || "Same"}</span>
+                                            <span className="text-white font-mono">Same</span>
                                           </div>
-                                          <div className="flex justify-between border-t border-green-900 pt-2 mt-2">
+                                          <div className="flex justify-between border-t border-green-900 pt-1.5 mt-1.5">
                                             <span className="text-gray-400 font-semibold">Size:</span>
-                                            <span className="text-white font-mono font-bold">{formatSize(job.size_after)}</span>
+                                            <span className="text-green-300 font-mono font-bold">{formatSize(job.size_after)}</span>
                                           </div>
+                                        </div>
+                                      </div>
+
+                                      {/* SAVINGS */}
+                                      <div className="bg-purple-900 bg-opacity-20 border border-purple-700 rounded-lg p-3">
+                                        <div className="text-purple-400 font-semibold mb-3 flex items-center gap-2 text-sm">
+                                          <span className="text-lg">💾</span>
+                                          <span>Savings</span>
+                                        </div>
+                                        <div className="space-y-1.5 text-xs">
+                                          {(() => {
+                                            const saved = job.size - job.size_after;
+                                            const percent = ((saved / job.size) * 100).toFixed(1);
+                                            const isSavings = saved > 0;
+
+                                            return (
+                                              <>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Difference:</span>
+                                                  <span className={`font-mono font-bold ${isSavings ? "text-green-400" : "text-red-400"}`}>
+                                                    {isSavings ? "-" : "+"}
+                                                    {formatSize(Math.abs(saved))}
+                                                  </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Percentage:</span>
+                                                  <span className={`font-mono font-bold ${isSavings ? "text-green-400" : "text-red-400"}`}>
+                                                    {isSavings ? "-" : "+"}
+                                                    {Math.abs(percent)}%
+                                                  </span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Container:</span>
+                                                  <span className="text-white font-mono">MKV</span>
+                                                </div>
+                                                <div className="flex justify-between">
+                                                  <span className="text-gray-400">Quality:</span>
+                                                  <span className={`font-medium ${isSavings ? "text-green-400" : "text-yellow-400"}`}>{isSavings ? "✅ Excellent" : "⚠️ Check"}</span>
+                                                </div>
+                                                <div className="border-t border-purple-900 pt-1.5 mt-1.5">
+                                                  <div className="text-center">
+                                                    <div className={`text-3xl font-bold mb-1 ${isSavings ? "text-green-400" : "text-red-400"}`}>
+                                                      {isSavings ? "-" : "+"}
+                                                      {Math.abs(percent)}%
+                                                    </div>
+                                                    <div className="text-gray-400 text-[10px]">{isSavings ? "Space Saved" : "Size Increased"}</div>
+                                                  </div>
+                                                </div>
+                                              </>
+                                            );
+                                          })()}
                                         </div>
                                       </div>
                                     </div>
@@ -3178,8 +3230,6 @@
           max_prefetch_files: 3,
           retry_attempts: 2,
           connection_timeout: 30000,
-          cleanup_old_jobs_days: 30,
-          cleanup_old_progress_days: 365,
           ffmpeg_options: {
             hwaccel: "cuda",
             video_codec: "hevc_nvenc",
@@ -4074,36 +4124,6 @@
                     </div>
 
                     <div className="space-y-4 pt-4 border-t border-gray-700">
-                      <h3 className="text-lg font-semibold text-white">Cleanup Settings</h3>
-
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-2">Auto-cleanup old jobs (days)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="365"
-                            value={config.cleanup_old_jobs_days || 30}
-                            onChange={(e) => updateConfig("cleanup_old_jobs_days", parseInt(e.target.value))}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm text-gray-300 mb-2">Auto-cleanup progress history (days)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="999"
-                            value={config.cleanup_old_progress_days || 365}
-                            onChange={(e) => updateConfig("cleanup_old_progress_days", parseInt(e.target.value))}
-                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4 pt-4 border-t border-gray-700">
                       <h3 className="text-lg font-semibold text-white">Local Paths</h3>
 
                       <div>
@@ -4215,17 +4235,17 @@
                         <div className="flex gap-2">
                           <input
                             type="text"
-                            value={config.default_download_path || ""}
-                            onChange={(e) => updateConfig("default_download_path", e.target.value)}
+                            value={config.download_path || ""}
+                            onChange={(e) => updateConfig("download_path", e.target.value)}
                             className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                             placeholder="C:/Users/Zed/Downloads"
                           />
                           <button
                             onClick={async () => {
                               try {
-                                const result = await window.electronAPI.selectFolder(config.default_download_path);
+                                const result = await window.electronAPI.selectFolder(config.download_path);
                                 if (result.success && result.path) {
-                                  updateConfig("default_download_path", result.path);
+                                  updateConfig("download_path", result.path);
                                 }
                               } catch (error) {
                                 console.error("Select folder error:", error);
@@ -4239,12 +4259,12 @@
                           </button>
                           <button
                             onClick={async () => {
-                              if (!config.default_download_path) {
+                              if (!config.download_path) {
                                 alert("⚠️ Please configure the path first");
                                 return;
                               }
                               try {
-                                const result = await window.electronAPI.openFolder(config.default_download_path);
+                                const result = await window.electronAPI.openFolder(config.download_path);
                                 if (!result.success) {
                                   alert("Failed to open folder: " + (result.error || "Path may not exist"));
                                 }
@@ -4277,8 +4297,8 @@
                             type="number"
                             min="1"
                             max="5"
-                            value={config.max_concurrent_downloads || 2}
-                            onChange={(e) => updateConfig("max_concurrent_downloads", parseInt(e.target.value))}
+                            value={config.advanced?.connection?.max_concurrent_downloads || 2}
+                            onChange={(e) => updateConfig("advanced.connection.max_concurrent_downloads", parseInt(e.target.value))}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
                         </div>
@@ -4289,8 +4309,8 @@
                             type="number"
                             min="1"
                             max="10"
-                            value={config.max_prefetch_files || 3}
-                            onChange={(e) => updateConfig("max_prefetch_files", parseInt(e.target.value))}
+                            value={config.advanced?.connection?.max_prefetch_files || 3}
+                            onChange={(e) => updateConfig("advanced.connection.max_prefetch_files", parseInt(e.target.value))}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
                         </div>
@@ -4301,8 +4321,8 @@
                             type="number"
                             min="0"
                             max="5"
-                            value={config.retry_attempts || 2}
-                            onChange={(e) => updateConfig("retry_attempts", parseInt(e.target.value))}
+                            value={config.advanced?.connection?.retry_attempts || 2}
+                            onChange={(e) => updateConfig("advanced.connection.retry_attempts", parseInt(e.target.value))}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
                         </div>
@@ -4314,8 +4334,8 @@
                             min="5000"
                             max="120000"
                             step="1000"
-                            value={config.connection_timeout || 30000}
-                            onChange={(e) => updateConfig("connection_timeout", parseInt(e.target.value))}
+                            value={config.advanced?.connection?.connection_timeout || 30000}
+                            onChange={(e) => updateConfig("advanced.connection.connection_timeout", parseInt(e.target.value))}
                             className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                           />
                         </div>
@@ -4326,11 +4346,6 @@
                       <h3 className="text-lg font-semibold text-white">Behavior</h3>
 
                       <div className="space-y-3">
-                        <label className="flex items-center cursor-pointer">
-                          <input type="checkbox" checked={config.advanced?.verify_checksums || true} onChange={(e) => updateConfig("advanced.verify_checksums", e.target.checked)} className="mr-2" />
-                          <span className="text-sm text-gray-300">Verify file integrity with checksums</span>
-                        </label>
-
                         <label className="flex items-center cursor-pointer">
                           <input
                             type="checkbox"
@@ -4364,13 +4379,77 @@
                     </div>
 
                     <div className="space-y-4 pt-4 border-t border-gray-700">
+                      <h3 className="text-lg font-semibold text-white">Advanced Options</h3>
+
+                      <div className="space-y-3">
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.behavior?.auto_start_queue !== false}
+                            onChange={(e) => updateConfig("advanced.behavior.auto_start_queue", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">Auto-start queue on launch</span>
+                        </label>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.behavior?.verify_checksums !== false}
+                            onChange={(e) => updateConfig("advanced.behavior.verify_checksums", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">Verify file checksums after transfer</span>
+                        </label>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.behavior?.create_backups !== false}
+                            onChange={(e) => updateConfig("advanced.behavior.create_backups", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">Create backups on server before replacing</span>
+                        </label>
+
+                        <label className="flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={config.advanced?.behavior?.extract_video_duration || false}
+                            onChange={(e) => updateConfig("advanced.behavior.extract_video_duration", e.target.checked)}
+                            className="mr-2"
+                          />
+                          <span className="text-sm text-gray-300">Extract video duration during statistics</span>
+                        </label>
+                        <p className="text-xs text-gray-400 ml-6">Slower, requires partial downloads but shows total duration in folders</p>
+
+                        <div>
+                          <label className="block text-sm text-gray-300 mb-2">
+                            Release Tag
+                            <span className="text-xs text-gray-500 ml-2">(appended to encoded filenames)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={config.advanced?.behavior?.release_tag || ""}
+                            onChange={(e) => updateConfig("advanced.behavior.release_tag", e.target.value)}
+                            placeholder="e.g., Z3D, PROPER, etc."
+                            className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                          />
+                          <p className="text-xs text-gray-500 mt-1">
+                            Example: "Movie [x265]-<span className="text-cyan-400">{config.advanced?.behavior?.release_tag || "TAG"}</span>.mkv"
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 pt-4 border-t border-gray-700">
                       <h3 className="text-lg font-semibold text-white">Logging</h3>
 
                       <div>
                         <label className="block text-sm text-gray-300 mb-2">Log Level</label>
                         <select
-                          value={config.advanced?.log_level || "info"}
-                          onChange={(e) => updateConfig("advanced.log_level", e.target.value)}
+                          value={config.advanced?.behavior?.log_level || "info"}
+                          onChange={(e) => updateConfig("advanced.behavior.log_level", e.target.value)}
                           className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
                         >
                           <option value="error">Error</option>

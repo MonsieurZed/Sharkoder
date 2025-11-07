@@ -35,6 +35,7 @@ const { QueueManager } = require("./backend/queue");
 const { TransferManager } = require("./backend/transfer");
 const { ProgressFileManager } = require("./backend/progressfile");
 const { logger, formatBytes } = require("./backend/utils");
+const configManager = require("./backend/config");
 
 let mainWindow;
 let tray;
@@ -227,6 +228,29 @@ const setupIpcHandlers = () => {
     try {
       await transferManager.ensureConnection();
       const items = await transferManager.listDirectory(remotePath || "/");
+
+      // If extract_video_duration is enabled, enrich video files with metadata
+      const extractDuration = configManager.get("advanced.behavior.extract_video_duration") || false;
+
+      if (extractDuration && transferManager.webdavManager) {
+        // Enrichir les fichiers vidéo avec leurs métadonnées
+        const enrichedItems = await Promise.all(
+          items.map(async (item) => {
+            if (item.type === "file" && item.isVideo) {
+              try {
+                const videoInfo = await transferManager.webdavManager.getVideoInfo(item.path);
+                return { ...item, ...videoInfo };
+              } catch (error) {
+                logger.debug(`Could not get video info for ${item.path}:`, error.message);
+                return item;
+              }
+            }
+            return item;
+          })
+        );
+        return { success: true, items: enrichedItems };
+      }
+
       return { success: true, items };
     } catch (error) {
       logger.error("Failed to list directory:", error);
@@ -361,7 +385,7 @@ const setupIpcHandlers = () => {
       // Load config to get default download path
       delete require.cache[require.resolve("./sharkoder.config.json")];
       const userConfig = require("./sharkoder.config.json");
-      const downloadPath = userConfig.default_download_path;
+      const downloadPath = userConfig.download_path;
 
       logger.info(`📂 Download path from config: "${downloadPath || "NOT SET"}"`);
 
@@ -1373,7 +1397,7 @@ F2 set video 2
       // Calculate stats for each folder
       for (const folder of folders) {
         try {
-          const includeDuration = configManager.get("remote.extract_video_duration") || false;
+          const includeDuration = configManager.get("advanced.behavior.extract_video_duration") || false;
           const stats = await transferManager.webdavManager.getFolderStats(folder.path, includeDuration);
           cache[folder.path] = {
             ...stats,

@@ -164,6 +164,11 @@ const initDatabase = async () => {
     } catch (e) {
       /* Column already exists */
     }
+    try {
+      db.run("ALTER TABLE jobs ADD COLUMN timing_data TEXT");
+    } catch (e) {
+      /* Column already exists */
+    }
 
     saveDatabase();
     logger.info("Jobs table ready");
@@ -478,6 +483,11 @@ const markJobCompleted = async (jobId, codecAfter = null, backupPaths = {}) => {
   }
   if (backupPaths.serverEncoded) {
     updates.server_encoded_path = backupPaths.serverEncoded;
+  }
+
+  // Add timing data if provided
+  if (backupPaths.timingData) {
+    updates.timing_data = backupPaths.timingData;
   }
 
   return updateJob(jobId, updates);

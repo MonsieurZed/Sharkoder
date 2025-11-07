@@ -147,8 +147,10 @@ class TransferManager {
 
   /**
    * List directory contents
+   * @param {string} remotePath - Path to list
+   * @param {object} options - { filterVideos: true } - set to false to list all files
    */
-  async listDirectory(remotePath = "/") {
+  async listDirectory(remotePath = "/", options = {}) {
     await this.ensureConnection();
 
     const method = this._chooseListMethod();
@@ -156,10 +158,10 @@ class TransferManager {
     try {
       if (method === "webdav") {
         logger.info(`[WebDAV] Listing directory: ${remotePath}`);
-        return await this.webdavManager.listDirectory(remotePath);
+        return await this.webdavManager.listDirectory(remotePath, options);
       } else {
         logger.info(`[SFTP] Listing directory: ${remotePath}`);
-        return await this.sftpManager.listDirectory(remotePath);
+        return await this.sftpManager.listDirectory(remotePath, options);
       }
     } catch (error) {
       logger.error(`Failed to list directory with ${method}:`, error);
@@ -167,10 +169,10 @@ class TransferManager {
       // Fallback to other method if possible
       if (method === "webdav" && this.sftpManager.connected) {
         logger.info("Falling back to SFTP...");
-        return await this.sftpManager.listDirectory(remotePath);
+        return await this.sftpManager.listDirectory(remotePath, options);
       } else if (method === "sftp" && this.webdavManager.connected) {
         logger.info("Falling back to WebDAV...");
-        return await this.webdavManager.listDirectory(remotePath);
+        return await this.webdavManager.listDirectory(remotePath, options);
       }
 
       throw error;
@@ -372,6 +374,30 @@ class TransferManager {
       return await this.webdavManager.renameFile(oldPath, newPath);
     }
     throw new Error("No transfer method connected");
+  }
+
+  /**
+   * Create a directory on the server
+   */
+  async createDirectory(remotePath) {
+    await this.ensureConnection();
+
+    try {
+      if (this.sftpManager.connected) {
+        return await this.sftpManager.createDirectory(remotePath);
+      }
+      if (this.webdavManager.connected) {
+        // WebDAV might not support createDirectory, try SFTP
+        if (this.sftpManager.connected) {
+          return await this.sftpManager.createDirectory(remotePath);
+        }
+        throw new Error("Directory creation not supported via WebDAV");
+      }
+      throw new Error("No transfer method connected");
+    } catch (error) {
+      logger.error(`Failed to create directory ${remotePath}:`, error);
+      throw error;
+    }
   }
 
   /**

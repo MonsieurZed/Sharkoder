@@ -105,8 +105,11 @@ class WebDAVManager {
     }
   }
 
-  async listDirectory(remotePath = "/") {
+  async listDirectory(remotePath = "/", options = {}) {
     await this.ensureConnection();
+
+    // Options: { filterVideos: true } - set to false to list all files
+    const filterVideos = options.filterVideos !== false; // Default: true
 
     try {
       // Build full path: remote_path + relativePath
@@ -141,11 +144,18 @@ class WebDAVManager {
           };
         })
         .filter((item) => {
-          // Show all directories, but only video files
-          return item.type === "directory" || item.isVideo;
+          // Show all directories
+          if (item.type === "directory") return true;
+
+          // If filterVideos is disabled, show all files
+          if (!filterVideos) return true;
+
+          // Otherwise, only show video files
+          return item.isVideo;
         });
 
-      logger.info(`Listed ${items.length} items in ${fullPath} (video files and directories only)`);
+      const filterDesc = filterVideos ? "(video files and directories only)" : "(all files and directories)";
+      logger.info(`Listed ${items.length} items in ${fullPath} ${filterDesc}`);
 
       return items;
     } catch (error) {

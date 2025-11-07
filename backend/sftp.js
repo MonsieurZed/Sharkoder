@@ -130,8 +130,11 @@ class SftpManager {
     }
   }
 
-  async listFiles(remotePath = "") {
+  async listFiles(remotePath = "", options = {}) {
     await this.ensureConnection();
+
+    // Options: { filterVideos: true } - set to false to list all files
+    const filterVideos = options.filterVideos !== false; // Default: true
 
     const fullPath = path.posix.join(this.config.remote.sftp.path, remotePath);
 
@@ -163,38 +166,45 @@ class SftpManager {
             modifyTime: item.modifyTime,
             cached: !!cachedEntry,
           });
-        } else if (item.type === "-" && isVideoFile(item.name)) {
-          // Video file
-          try {
-            // Get additional file info
-            const stats = await this.sftp.stat(fullItemPath);
+        } else if (item.type === "-") {
+          // File - check if we should filter videos or show all files
+          const shouldInclude = !filterVideos || isVideoFile(item.name);
 
-            result.push({
-              name: item.name,
-              path: itemPath,
-              type: "file",
-              size: stats.size,
-              sizeFormatted: formatBytes(stats.size),
-              modifyTime: item.modifyTime,
-              extension: path.extname(item.name).toLowerCase(),
-            });
-          } catch (statError) {
-            logger.warn(`Failed to get stats for ${item.name}:`, statError);
+          if (shouldInclude) {
+            try {
+              // Get additional file info
+              const stats = await this.sftp.stat(fullItemPath);
 
-            result.push({
-              name: item.name,
-              path: itemPath,
-              type: "file",
-              size: item.size,
-              sizeFormatted: formatBytes(item.size),
-              modifyTime: item.modifyTime,
-              extension: path.extname(item.name).toLowerCase(),
-            });
+              result.push({
+                name: item.name,
+                path: itemPath,
+                type: "file",
+                size: stats.size,
+                sizeFormatted: formatBytes(stats.size),
+                modifyTime: item.modifyTime,
+                extension: path.extname(item.name).toLowerCase(),
+                isVideo: isVideoFile(item.name), // Add isVideo flag
+              });
+            } catch (statError) {
+              logger.warn(`Failed to get stats for ${item.name}:`, statError);
+
+              result.push({
+                name: item.name,
+                path: itemPath,
+                type: "file",
+                size: item.size,
+                sizeFormatted: formatBytes(item.size),
+                modifyTime: item.modifyTime,
+                extension: path.extname(item.name).toLowerCase(),
+                isVideo: isVideoFile(item.name), // Add isVideo flag
+              });
+            }
           }
         }
       }
 
-      logger.info(`Listed ${result.length} items in ${fullPath}`);
+      const filterDesc = filterVideos ? "(video files and directories only)" : "(all files and directories)";
+      logger.info(`Listed ${result.length} items in ${fullPath} ${filterDesc}`);
       return result.sort((a, b) => {
         // Directories first, then files
         if (a.type !== b.type) {
@@ -206,6 +216,15 @@ class SftpManager {
       logger.error(`Failed to list files in ${fullPath}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Alias for listFiles to match WebDAV interface
+   * @param {string} remotePath - Path to list
+   * @param {object} options - { filterVideos: true } - set to false to list all files
+   */
+  async listDirectory(remotePath = "/", options = {}) {
+    return await this.listFiles(remotePath, options);
   }
 
   async downloadFile(remotePath, localPath, onProgress = null) {

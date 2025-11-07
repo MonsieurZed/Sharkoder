@@ -29,8 +29,47 @@ const React = window.React;
  * @returns {JSX.Element} Queue table component
  */
 window.QueueTable = ({ jobs, onRemoveJob, onRetryJob, progressData, queueStatus, userConfig, setQueueStatus, loadJobs, loadQueueStatus, setJobs, loadStats }) => {
+  const React = window.React;
+  const { useState, useEffect } = React;
+
   // Filter out completed jobs - only show active queue
   const queueJobs = jobs.filter((job) => job.status !== "completed");
+
+  // State for pause after current encoding
+  const [pauseAfterCurrent, setPauseAfterCurrent] = useState(false);
+
+  // Load pause after current state on mount
+  useEffect(() => {
+    const loadPauseAfterCurrent = async () => {
+      try {
+        const result = await window.electronAPI.queueGetPauseAfterCurrent();
+        if (result.success) {
+          setPauseAfterCurrent(result.enabled);
+        }
+      } catch (error) {
+        console.error("Failed to get pause after current:", error);
+      }
+    };
+    loadPauseAfterCurrent();
+
+    // Listen for pause after current changes
+    const handlePauseAfterCurrentChange = (data) => {
+      setPauseAfterCurrent(data.enabled);
+    };
+    window.electronAPI.onPauseAfterCurrentChange(handlePauseAfterCurrentChange);
+  }, []);
+
+  const togglePauseAfterCurrent = async () => {
+    try {
+      const newValue = !pauseAfterCurrent;
+      const result = await window.electronAPI.queuePauseAfterCurrent(newValue);
+      if (result.success) {
+        setPauseAfterCurrent(result.enabled);
+      }
+    } catch (error) {
+      console.error("Failed to toggle pause after current:", error);
+    }
+  };
 
   /**
    * Get progress data for a specific job
@@ -90,6 +129,20 @@ window.QueueTable = ({ jobs, onRemoveJob, onRetryJob, progressData, queueStatus,
               <span className="text-2xl">{!queueStatus.isRunning ? "▶️" : "⏹️"}</span>
               <span>{queueStatus.loading ? (queueStatus.isRunning ? "Arrêt..." : "Démarrage...") : queueStatus.isRunning ? "ARRÊTER" : "DÉMARRER"}</span>
             </button>
+
+            {/* Pause After Current Button */}
+            {queueStatus.isRunning && (
+              <button
+                onClick={togglePauseAfterCurrent}
+                className={`font-semibold py-2 px-4 rounded-lg transition-colors flex items-center space-x-2 ${
+                  pauseAfterCurrent ? "bg-yellow-600 hover:bg-yellow-700 text-white animate-pulse" : "bg-gray-700 hover:bg-gray-600 text-white"
+                }`}
+                title={pauseAfterCurrent ? "La queue se mettra en pause après l'encodage en cours" : "Mettre en pause après l'encodage en cours"}
+              >
+                <span className="text-xl">⏸️</span>
+                <span>{pauseAfterCurrent ? "Pause après actuel" : "Pause après actuel"}</span>
+              </button>
+            )}
 
             {/* Current Job Info */}
             {queueStatus.isRunning && queueStatus.currentJob && (

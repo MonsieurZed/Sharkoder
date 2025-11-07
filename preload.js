@@ -31,9 +31,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
   webdavDelete: (remotePath, isDirectory) => ipcRenderer.invoke("webdav:delete", remotePath, isDirectory),
   webdavDownloadToDefault: (remotePath, isDirectory) => ipcRenderer.invoke("webdav:downloadToDefault", remotePath, isDirectory),
 
-  // FFmpeg preset management
+  // FFmpeg preset management - Legacy (single preset)
   saveFFmpegPreset: (preset) => ipcRenderer.invoke("preset:saveFFmpeg", preset),
   loadFFmpegPreset: () => ipcRenderer.invoke("preset:loadFFmpeg"),
+
+  // FFmpeg preset management - Multiple named presets
+  presetSave: (presetName, preset) => ipcRenderer.invoke("preset:save", presetName, preset),
+  presetLoad: (presetName) => ipcRenderer.invoke("preset:load", presetName),
+  presetList: () => ipcRenderer.invoke("preset:list"),
+  presetDelete: (presetName) => ipcRenderer.invoke("preset:delete", presetName),
 
   // WebDAV cache operations
   syncCache: () => ipcRenderer.invoke("webdav:syncCache"),
@@ -64,6 +70,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   queueStop: () => ipcRenderer.invoke("queue:stop"),
   queuePause: () => ipcRenderer.invoke("queue:pause"),
   queueResume: () => ipcRenderer.invoke("queue:resume"),
+  queuePauseAfterCurrent: (enabled) => ipcRenderer.invoke("queue:pauseAfterCurrent", enabled),
+  queueGetPauseAfterCurrent: () => ipcRenderer.invoke("queue:getPauseAfterCurrent"),
   queueClear: () => ipcRenderer.invoke("queue:clear"),
   queueGetStatus: () => ipcRenderer.invoke("queue:getStatus"),
   queueUpdateSettings: (settings) => ipcRenderer.invoke("queue:updateSettings", settings),
@@ -117,6 +125,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   onJobUpdate: (callback) => {
     ipcRenderer.on("queue:jobUpdate", (event, data) => callback(data));
+  },
+
+  onPauseAfterCurrentChange: (callback) => {
+    ipcRenderer.on("queue:pauseAfterCurrentChange", (event, data) => callback(data));
   },
 
   onQueueError: (callback) => {

@@ -455,27 +455,51 @@ const setupIpcHandlers = () => {
   });
 
   // FFmpeg preset management
-  ipcMain.handle("preset:saveFFmpeg", async (event, preset) => {
+  // Preset Management - Multiple named presets support
+  ipcMain.handle("preset:save", async (event, presetName, preset) => {
     try {
       if (!transferManager) {
         return { success: false, error: "Transfer manager not initialized" };
       }
 
-      logger.info("💾 Saving FFmpeg preset to server...");
+      // Sanitize preset name (remove invalid characters)
+      const safeName = presetName.replace(/[^a-zA-Z0-9_\-]/g, "_");
+      if (!safeName) {
+        return { success: false, error: "Invalid preset name" };
+      }
 
-      // Save preset as JSON file to server root
-      const presetJson = JSON.stringify(preset, null, 2);
-      const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, "ffmpeg_preset.json");
+      logger.info(`💾 Saving FFmpeg preset "${safeName}" to server...`);
+
+      // Add metadata
+      const presetData = {
+        ...preset,
+        name: safeName,
+        saved_at: new Date().toISOString(),
+        version: "1.0",
+      };
+
+      // Save preset as JSON file to server /presets/ folder
+      const presetJson = JSON.stringify(presetData, null, 2);
+      const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, `preset_${safeName}.json`);
 
       await fs.writeFile(tempPresetPath, presetJson, "utf8");
 
-      // Upload to server root WITHOUT creating backup (it's just a config file)
-      // Temporarily disable backup creation
+      // Upload to server /presets/ folder WITHOUT creating backup
       const originalBackupSetting = transferManager.config.advanced?.create_backups;
       if (!transferManager.config.advanced) transferManager.config.advanced = {};
       transferManager.config.advanced.create_backups = false;
 
-      const result = await transferManager.uploadFile(tempPresetPath, "/ffmpeg_preset.json");
+      // Ensure /presets/ directory exists on server
+      try {
+        await transferManager.createDirectory("/presets");
+        logger.info("Ensured /presets/ directory exists on server");
+      } catch (error) {
+        // Directory might already exist, that's fine
+        logger.info("/presets/ directory check: " + error.message);
+      }
+
+      const remotePath = `/presets/ffmpeg_${safeName}.json`;
+      const result = await transferManager.uploadFile(tempPresetPath, remotePath);
 
       // Restore original backup setting
       transferManager.config.advanced.create_backups = originalBackupSetting;
@@ -483,11 +507,11 @@ const setupIpcHandlers = () => {
       // Cleanup temp file
       await fs.remove(tempPresetPath);
 
-      if (result.success) {
-        logger.info("✅ FFmpeg preset saved to server: /ffmpeg_preset.json");
-        return { success: true, path: "/ffmpeg_preset.json" };
+      if (result) {
+        logger.info(`✅ FFmpeg preset "${safeName}" saved to server: ${remotePath}`);
+        return { success: true, path: remotePath, name: safeName };
       } else {
-        return { success: false, error: result.error };
+        return { success: false, error: "Upload returned no result" };
       }
     } catch (error) {
       logger.error("Failed to save FFmpeg preset:", error);
@@ -495,18 +519,19 @@ const setupIpcHandlers = () => {
     }
   });
 
-  ipcMain.handle("preset:loadFFmpeg", async (event) => {
+  ipcMain.handle("preset:load", async (event, presetName) => {
     try {
       if (!transferManager) {
         return { success: false, error: "Transfer manager not initialized" };
       }
 
-      logger.info("📥 Loading FFmpeg preset from server...");
+      logger.info(`📥 Loading FFmpeg preset "${presetName}" from server...`);
 
-      // Download preset from server root
-      const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, "ffmpeg_preset_downloaded.json");
+      // Download preset from server /presets/ folder
+      const remotePath = `/presets/ffmpeg_${presetName}.json`;
+      const tempPresetPath = path.join(require("./sharkoder.config.json").local_temp, `preset_${presetName}_downloaded.json`);
 
-      const result = await transferManager.downloadFile("/ffmpeg_preset.json", tempPresetPath);
+      const result = await transferManager.downloadFile(remotePath, tempPresetPath);
 
       if (result.success) {
         // Read and parse the preset
@@ -516,15 +541,79 @@ const setupIpcHandlers = () => {
         // Cleanup temp file
         await fs.remove(tempPresetPath);
 
-        logger.info("✅ FFmpeg preset loaded from server");
+        logger.info(`✅ FFmpeg preset "${presetName}" loaded from server`);
         return { success: true, preset };
       } else {
-        return { success: false, error: result.error || "Preset file not found on server" };
+        return { success: false, error: result.error || `Preset "${presetName}" not found on server` };
       }
     } catch (error) {
-      logger.error("Failed to load FFmpeg preset:", error);
+      logger.error(`Failed to load FFmpeg preset "${presetName}":`, error);
       return { success: false, error: error.message };
     }
+  });
+
+  ipcMain.handle("preset:list", async (event) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      logger.info("📋 Listing FFmpeg presets from server...");
+
+      // List files in /presets/ folder (include all files, not just videos)
+      const files = await transferManager.listDirectory("/presets", { filterVideos: false });
+
+      // Filter only ffmpeg preset files
+      const presets = files
+        .filter((file) => file.name.startsWith("ffmpeg_") && file.name.endsWith(".json"))
+        .map((file) => {
+          // Extract preset name from filename: ffmpeg_NAME.json -> NAME
+          const name = file.name.replace(/^ffmpeg_/, "").replace(/\.json$/, "");
+          return {
+            name,
+            path: file.path,
+            size: file.size,
+            modified: file.modified,
+          };
+        })
+        .sort((a, b) => a.name.localeCompare(b.name));
+
+      logger.info(`✅ Found ${presets.length} FFmpeg presets on server`);
+      return { success: true, presets };
+    } catch (error) {
+      logger.error("Failed to list FFmpeg presets:", error);
+      return { success: true, presets: [] }; // Return empty array if folder doesn't exist yet
+    }
+  });
+
+  ipcMain.handle("preset:delete", async (event, presetName) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      logger.info(`🗑️ Deleting FFmpeg preset "${presetName}" from server...`);
+
+      const remotePath = `/presets/ffmpeg_${presetName}.json`;
+      await transferManager.deleteFile(remotePath);
+
+      logger.info(`✅ FFmpeg preset "${presetName}" deleted from server`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to delete FFmpeg preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Legacy support - keep old handlers for backward compatibility
+  ipcMain.handle("preset:saveFFmpeg", async (event, preset) => {
+    // Redirect to new preset:save with default name
+    return ipcMain.emit("preset:save", event, "default", preset);
+  });
+
+  ipcMain.handle("preset:loadFFmpeg", async (event) => {
+    // Redirect to new preset:load with default name
+    return ipcMain.emit("preset:load", event, "default");
   });
 
   // Queue operations
@@ -723,6 +812,31 @@ const setupIpcHandlers = () => {
       };
     } catch (error) {
       logger.error("Failed to resume queue:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("queue:pauseAfterCurrent", async (event, enabled) => {
+    try {
+      queueManager.setPauseAfterCurrent(enabled);
+      return {
+        success: true,
+        enabled: queueManager.getPauseAfterCurrent(),
+      };
+    } catch (error) {
+      logger.error("Failed to set pause after current:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("queue:getPauseAfterCurrent", async () => {
+    try {
+      return {
+        success: true,
+        enabled: queueManager.getPauseAfterCurrent(),
+      };
+    } catch (error) {
+      logger.error("Failed to get pause after current:", error);
       return { success: false, error: error.message };
     }
   });
@@ -1498,6 +1612,13 @@ app.whenReady().then(async () => {
       logger.info("Job update:", data);
       if (mainWindow) {
         mainWindow.webContents.send("queue:jobUpdate", data);
+      }
+    });
+
+    queueManager.on("pauseAfterCurrentChange", (data) => {
+      logger.info("Pause after current change:", data);
+      if (mainWindow) {
+        mainWindow.webContents.send("queue:pauseAfterCurrentChange", data);
       }
     });
 

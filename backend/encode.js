@@ -243,6 +243,11 @@ class VideoEncoder extends EventEmitter {
       const multipass = ffmpegConfig.multipass;
       const gpuLimit = ffmpegConfig.gpu_limit || 100; // Limite GPU en % (contrôle la vitesse d'encodage, pas la qualité)
 
+      // Advanced codec settings
+      const pixFmt = ffmpegConfig.pix_fmt || "p010le"; // Pixel format: yuv420p (8-bit) / p010le (10-bit)
+      const gopSize = ffmpegConfig.gop_size || 96; // GOP size (keyframe interval)
+      const refs = ffmpegConfig.refs || 4; // Reference frames: 1-16
+
       // Calculer le FPS maximal basé sur la limite GPU
       // Au lieu de réduire la qualité, on limite la vitesse d'encodage
       let maxEncodeFPS = null; // null = illimité (100%)
@@ -308,6 +313,7 @@ class VideoEncoder extends EventEmitter {
               temporalAQ ? 1 : 0
             }, multipass=${multipass}, gpu_limit=${gpuLimit}%`
           );
+          logger.info(`NVENC Codec Settings: profile=${profile}, pix_fmt=${pixFmt}, gop=${gopSize}, refs=${refs}`);
 
           // NVENC encoding with full quality parameters (no degradation based on gpu_limit)
           command
@@ -323,12 +329,12 @@ class VideoEncoder extends EventEmitter {
             command.addOption("-profile:v", profile);
           }
 
-          // Pixel format: 10-bit for HEVC main10, yuv420p for VP9
-          if (isHEVC && profile === "main10") {
-            command.addOption("-pix_fmt", "p010le"); // 10-bit pixel format for main10
-          } else if (isVP9) {
-            command.addOption("-pix_fmt", "yuv420p"); // Standard for VP9
-          }
+          // Pixel format: use configured value (default: p010le for 10-bit)
+          command.addOption("-pix_fmt", pixFmt);
+
+          // GOP size (keyframe interval) and reference frames
+          command.addOption("-g", gopSize.toString()); // GOP size
+          command.addOption("-refs", refs.toString()); // Reference frames
 
           // Common NVENC options - FULL QUALITY (no adjustments based on gpu_limit)
           command

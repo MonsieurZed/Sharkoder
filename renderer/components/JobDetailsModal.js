@@ -34,6 +34,45 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
   const percent = ((saved / job.size) * 100).toFixed(1);
   const isSavings = saved > 0;
 
+  // Calculate durations (if timestamps are available)
+  const formatDuration = (seconds) => {
+    if (!seconds || seconds < 0) return "N/A";
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+
+    if (hours > 0) {
+      return `${hours}h ${mins}m ${secs}s`;
+    } else if (mins > 0) {
+      return `${mins}m ${secs}s`;
+    } else {
+      return `${secs}s`;
+    }
+  };
+
+  // Parse timing data from job
+  let downloadTime = null;
+  let encodeTime = null;
+  let uploadTime = null;
+  let totalTime = null;
+
+  try {
+    if (job.timing_data) {
+      const timing = typeof job.timing_data === "string" ? JSON.parse(job.timing_data) : job.timing_data;
+      downloadTime = timing.download_duration;
+      encodeTime = timing.encode_duration;
+      uploadTime = timing.upload_duration;
+      totalTime = timing.total_duration;
+    } else if (job.started_at && job.finished_at) {
+      // Fallback: calculate total time from timestamps
+      const start = new Date(job.started_at).getTime();
+      const end = new Date(job.finished_at).getTime();
+      totalTime = (end - start) / 1000; // Convert to seconds
+    }
+  } catch (e) {
+    console.error("Failed to parse timing data:", e);
+  }
+
   // Parse encoding params
   let params = null;
   try {
@@ -62,6 +101,34 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
           <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
             <div className="text-sm text-gray-400 mb-1">File</div>
             <div className="text-white font-mono break-all">{job.filename}</div>
+          </div>
+
+          {/* File Paths */}
+          <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
+            <div className="text-sm text-purple-400 font-semibold mb-3 flex items-center gap-2">
+              <span className="text-lg">📁</span>
+              <span>File Paths</span>
+            </div>
+            <div className="space-y-2 text-xs">
+              <div>
+                <div className="text-gray-400 mb-1">🌐 Remote Path (Original):</div>
+                <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.remote_path || "N/A"}</div>
+              </div>
+              <div>
+                <div className="text-gray-400 mb-1">💾 Local Path (Downloaded):</div>
+                <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.local_path || "N/A"}</div>
+              </div>
+              <div>
+                <div className="text-gray-400 mb-1">🎬 Encoded Path (Transcoded):</div>
+                <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.encoded_path || "N/A"}</div>
+              </div>
+              {job.backup_path && (
+                <div>
+                  <div className="text-gray-400 mb-1">🔒 Backup Path (Original Saved):</div>
+                  <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.backup_path}</div>
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Before/After/Savings Grid */}
@@ -131,7 +198,7 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Bitrate:</span>
-                  <span className="text-white font-mono">Optimized</span>
+                  <span className="text-white font-mono">{job.bitrate_after ? `${(job.bitrate_after / 1000000).toFixed(2)} Mbps` : "N/A"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-400">Audio:</span>
@@ -156,7 +223,7 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
             <div className="bg-purple-900 bg-opacity-20 border border-purple-700 rounded-lg p-3">
               <div className="text-purple-400 font-semibold mb-3 flex items-center gap-2 text-sm">
                 <span className="text-lg">💾</span>
-                <span>Savings</span>
+                <span>Savings & Timing</span>
               </div>
               <div className="space-y-1.5 text-xs">
                 <div className="flex justify-between">
@@ -173,22 +240,21 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
                     {Math.abs(percent)}%
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-400">Container:</span>
-                  <span className="text-white font-mono">MKV</span>
+                <div className="flex justify-between border-t border-purple-900 pt-1.5 mt-1.5">
+                  <span className="text-gray-400">⏬ Download:</span>
+                  <span className="text-white font-mono">{formatDuration(downloadTime)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-gray-400">Quality:</span>
-                  <span className={`font-medium ${isSavings ? "text-green-400" : "text-yellow-400"}`}>{isSavings ? "✅ Excellent" : "⚠️ Check"}</span>
+                  <span className="text-gray-400">🎬 Encoding:</span>
+                  <span className="text-white font-mono">{formatDuration(encodeTime)}</span>
                 </div>
-                <div className="border-t border-purple-900 pt-1.5 mt-1.5">
-                  <div className="text-center">
-                    <div className={`text-3xl font-bold mb-1 ${isSavings ? "text-green-400" : "text-red-400"}`}>
-                      {isSavings ? "-" : "+"}
-                      {Math.abs(percent)}%
-                    </div>
-                    <div className="text-gray-400 text-[10px]">{isSavings ? "Space Saved" : "Size Increased"}</div>
-                  </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-400">⏫ Upload:</span>
+                  <span className="text-white font-mono">{formatDuration(uploadTime)}</span>
+                </div>
+                <div className="flex justify-between border-t border-purple-900 pt-1.5 mt-1.5">
+                  <span className="text-gray-400 font-semibold">⏱️ Total:</span>
+                  <span className="text-purple-300 font-mono font-bold">{formatDuration(totalTime)}</span>
                 </div>
               </div>
             </div>

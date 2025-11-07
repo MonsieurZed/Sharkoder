@@ -466,6 +466,7 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
   const navigateToFolder = (folderPath) => {
     const normalizedPath = folderPath.startsWith("/") ? folderPath : "/" + folderPath;
     console.log(`Navigating to: ${normalizedPath} (original: ${folderPath})`);
+    setSearchTerm(""); // Clear search when navigating to a folder
     setCurrentPath(normalizedPath);
     setTimeout(() => loadFiles(normalizedPath), 0);
   };

@@ -39,11 +39,15 @@ class QueueManager extends EventEmitter {
     this.encoder = new VideoEncoder(config, transferManager); // Pass transferManager
     this.isRunning = false;
     this.isPaused = false;
+    this.pauseAfterCurrent = false; // Flag to pause after current encoding completes
 
     // Pipeline stages: each job can be in one of these stages simultaneously
     this.downloadingJobs = new Map(); // jobId -> { job, localPath, promise }
     this.encodingJob = null; // Only one encoding at a time
     this.uploadingJobs = new Map(); // jobId -> { job, encodedPath, promise }
+
+    // Timing tracking for each job
+    this.jobTimings = new Map(); // jobId -> { downloadStart, downloadEnd, encodeStart, encodeEnd, uploadStart, uploadEnd }
 
     // Sequential downloads for stability and speed
     this.maxConcurrentDownloads = 1;
@@ -135,7 +139,7 @@ class QueueManager extends EventEmitter {
     const filename = lastSlash >= 0 ? normalizedPath.substring(lastSlash + 1) : normalizedPath;
 
     // Get release tag from config (default: Z3D)
-    const releaseTag = this.config.advanced?.behavior?.release_tag || "Z3D";
+    const releaseTag = this.config.advanced?.behavior?.release_tag || "TaG";
 
     // Determine codec family from config
     const videoCodec = this.config.ffmpeg?.video_codec || "hevc_nvenc";
@@ -175,10 +179,21 @@ class QueueManager extends EventEmitter {
     }
 
     this.isPaused = false;
+    this.pauseAfterCurrent = false; // Clear pause flag when resuming
     logger.info("Queue processing resumed");
 
     // Trigger processing of next job
     this.processQueue();
+  }
+
+  setPauseAfterCurrent(enabled) {
+    this.pauseAfterCurrent = enabled;
+    logger.info(`Pause after current encoding: ${enabled ? "ENABLED" : "DISABLED"}`);
+    this.emit("pauseAfterCurrentChange", { enabled });
+  }
+
+  getPauseAfterCurrent() {
+    return this.pauseAfterCurrent;
   }
 
   async addJob(filePath, fileInfo) {
@@ -497,6 +512,12 @@ class QueueManager extends EventEmitter {
       await markJobStarted(job.id);
       await updateJob(job.id, { status: "downloading" });
 
+      // Start timing
+      if (!this.jobTimings.has(job.id)) {
+        this.jobTimings.set(job.id, {});
+      }
+      this.jobTimings.get(job.id).downloadStart = Date.now();
+
       const localPath = path.join(this.config.storage.local_temp, "downloaded", `${job.id}_${path.basename(job.filepath)}`);
 
       await fs.ensureDir(path.dirname(localPath));
@@ -507,6 +528,8 @@ class QueueManager extends EventEmitter {
           this.handleDownloadProgress(job.id, progress);
         })
         .then(() => {
+          // End timing
+          this.jobTimings.get(job.id).downloadEnd = Date.now();
           logger.info(`[DOWNLOAD] Completed job ${job.id}`);
           this.downloadingJobs.delete(job.id);
 
@@ -516,6 +539,7 @@ class QueueManager extends EventEmitter {
         .catch(async (error) => {
           logger.error(`[DOWNLOAD] Failed job ${job.id}:`, error);
           this.downloadingJobs.delete(job.id);
+          this.jobTimings.delete(job.id); // Clean up timings on failure
           await markJobFailed(job.id, error);
           await this.cleanupJobFiles(job);
         });
@@ -545,6 +569,12 @@ class QueueManager extends EventEmitter {
 
       logger.info(`[ENCODE] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "encoding" });
+
+      // Start encoding timing
+      if (!this.jobTimings.has(job.id)) {
+        this.jobTimings.set(job.id, {});
+      }
+      this.jobTimings.get(job.id).encodeStart = Date.now();
 
       try {
         // Get video info
@@ -650,6 +680,15 @@ class QueueManager extends EventEmitter {
             this.encodingJob = null;
             this.emit("jobUpdate", { id: job.id, status: "awaiting_approval" });
             logger.info(`[ENCODE] Job ${job.id} (skipped) paused for manual approval`);
+
+            // Check if pause after current was requested
+            if (this.pauseAfterCurrent) {
+              logger.info(`⏸️ Pause after current encoding requested - pausing queue`);
+              this.isPaused = true;
+              this.pauseAfterCurrent = false;
+              this.emit("statusChange", { isRunning: this.isRunning, isPaused: true });
+              this.emit("pauseAfterCurrentChange", { enabled: false });
+            }
           } else {
             // Update to ready for upload
             await updateJob(job.id, {
@@ -663,6 +702,15 @@ class QueueManager extends EventEmitter {
             logger.info(`[ENCODE] Job ${job.id} completed (skipped encoding)`);
             this.encodingJob = null;
             this.emit("jobUpdate", { id: job.id, status: "ready_upload" });
+
+            // Check if pause after current was requested
+            if (this.pauseAfterCurrent) {
+              logger.info(`⏸️ Pause after current encoding requested - pausing queue`);
+              this.isPaused = true;
+              this.pauseAfterCurrent = false;
+              this.emit("statusChange", { isRunning: this.isRunning, isPaused: true });
+              this.emit("pauseAfterCurrentChange", { enabled: false });
+            }
           }
           return;
         }
@@ -742,6 +790,11 @@ class QueueManager extends EventEmitter {
         if (job.pause_before_upload) {
           logger.info(`[ENCODE] Job ${job.id} requires manual review before upload`);
 
+          // End encoding timing
+          if (this.jobTimings.has(job.id)) {
+            this.jobTimings.get(job.id).encodeEnd = Date.now();
+          }
+
           // Update job with encoded file metadata and set status to awaiting_approval
           await updateJob(job.id, {
             status: "awaiting_approval",
@@ -755,7 +808,21 @@ class QueueManager extends EventEmitter {
           this.encodingJob = null;
           this.emit("jobUpdate", { id: job.id, status: "awaiting_approval" });
           logger.info(`[ENCODE] Job ${job.id} paused for manual approval`);
+
+          // Check if pause after current was requested
+          if (this.pauseAfterCurrent) {
+            logger.info(`⏸️ Pause after current encoding requested - pausing queue`);
+            this.isPaused = true;
+            this.pauseAfterCurrent = false;
+            this.emit("statusChange", { isRunning: this.isRunning, isPaused: true });
+            this.emit("pauseAfterCurrentChange", { enabled: false });
+          }
         } else {
+          // End encoding timing
+          if (this.jobTimings.has(job.id)) {
+            this.jobTimings.get(job.id).encodeEnd = Date.now();
+          }
+
           // Update job status to ready for upload
           await updateJob(job.id, {
             status: "ready_upload",
@@ -767,6 +834,15 @@ class QueueManager extends EventEmitter {
           });
 
           this.encodingJob = null;
+
+          // Check if pause after current was requested
+          if (this.pauseAfterCurrent) {
+            logger.info(`⏸️ Pause after current encoding requested - pausing queue`);
+            this.isPaused = true;
+            this.pauseAfterCurrent = false;
+            this.emit("statusChange", { isRunning: this.isRunning, isPaused: true });
+            this.emit("pauseAfterCurrentChange", { enabled: false });
+          }
         }
       } catch (error) {
         logger.error(`[ENCODE] Failed job ${job.id}:`, error);
@@ -805,6 +881,12 @@ class QueueManager extends EventEmitter {
       logger.info(`[UPLOAD] Starting job ${job.id}: ${job.filepath}`);
       await updateJob(job.id, { status: "uploading" });
 
+      // Start upload timing
+      if (!this.jobTimings.has(job.id)) {
+        this.jobTimings.set(job.id, {});
+      }
+      this.jobTimings.get(job.id).uploadStart = Date.now();
+
       // Generate new filename with x265 codec and release tag
       const codecAfter = job.codec_after || (this.encoder.gpuAvailable ? "hevc_nvenc" : "hevc (libx265)");
       const newServerPath = this.generateEncodedFilename(job.filepath, codecAfter);
@@ -818,6 +900,11 @@ class QueueManager extends EventEmitter {
           this.handleUploadProgress(job.id, progress);
         })
         .then(async () => {
+          // End upload timing
+          if (this.jobTimings.has(job.id)) {
+            this.jobTimings.get(job.id).uploadEnd = Date.now();
+          }
+
           logger.info(`[UPLOAD] Completed job ${job.id}`);
           this.uploadingJobs.delete(job.id);
 
@@ -830,13 +917,35 @@ class QueueManager extends EventEmitter {
           const localOriginalPath = path.join(this.config.storage.local_backup, "originals", normalizedPath);
           const localEncodedPath = path.join(this.config.storage.local_backup, "encoded", normalizedPath);
 
-          // Mark job as completed with actual codec used and backup paths
+          // Calculate timing data
+          const timings = this.jobTimings.get(job.id) || {};
+          const timingData = {
+            download_duration: timings.downloadEnd && timings.downloadStart ? (timings.downloadEnd - timings.downloadStart) / 1000 : null,
+            encode_duration: timings.encodeEnd && timings.encodeStart ? (timings.encodeEnd - timings.encodeStart) / 1000 : null,
+            upload_duration: timings.uploadEnd && timings.uploadStart ? (timings.uploadEnd - timings.uploadStart) / 1000 : null,
+            total_duration: null,
+          };
+
+          // Calculate total duration from first start to last end
+          const allTimestamps = [timings.downloadStart, timings.downloadEnd, timings.encodeStart, timings.encodeEnd, timings.uploadStart, timings.uploadEnd].filter((t) => t != null);
+          if (allTimestamps.length >= 2) {
+            const firstTimestamp = Math.min(...allTimestamps);
+            const lastTimestamp = Math.max(...allTimestamps);
+            timingData.total_duration = (lastTimestamp - firstTimestamp) / 1000;
+          }
+
+          // Mark job as completed with actual codec used, backup paths, and timing data
           await markJobCompleted(job.id, codecAfter, {
             localOriginal: localOriginalPath,
             localEncoded: localEncodedPath,
             serverOriginal: job.filepath,
             serverEncoded: newServerPath,
+            timingData: JSON.stringify(timingData),
           });
+
+          // Clean up timing data
+          this.jobTimings.delete(job.id);
+
           await this.cleanupJobFiles(job);
 
           this.emit("jobComplete", job);
@@ -844,6 +953,7 @@ class QueueManager extends EventEmitter {
         .catch(async (error) => {
           logger.error(`[UPLOAD] Failed job ${job.id}:`, error);
           this.uploadingJobs.delete(job.id);
+          this.jobTimings.delete(job.id); // Clean up timings on failure
 
           // No backup to restore since we upload to a new filename
           logger.info(`[UPLOAD] Upload failed, original file unchanged at: ${job.filepath}`);

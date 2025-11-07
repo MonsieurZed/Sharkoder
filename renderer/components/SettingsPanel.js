@@ -21,25 +21,40 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
       gpu_enabled: true,
       force_gpu: false,
       gpu_limit: 100,
-      encode_preset: "p7",
-      cq: 24,
-      rc_mode: "vbr_hq",
-      bitrate: "5",
-      maxrate: "8",
-      lookahead: 32,
-      bframes: 3,
-      b_ref_mode: "middle",
-      spatial_aq: true,
-      temporal_aq: true,
-      aq_strength: 8,
-      multipass: "fullres",
+
+      // GPU NVENC Settings - Organized by importance
+      encode_preset: "p7", // p1-p7: Speed vs Quality (p7 = best quality)
+      rc_mode: "vbr_hq", // Rate control: constqp/vbr/vbr_hq/cbr
+      cq: 24, // Constant Quality: 0-51 (lower = better)
+      bitrate: "5M", // Average bitrate target
+      maxrate: "8M", // Maximum bitrate (1.5-2x average)
+
+      // Advanced GPU Settings
+      multipass: "fullres", // disabled/qres/fullres
+      lookahead: 32, // RC Lookahead: 0-32 frames
+      bframes: 3, // B-frames: 0-4
+      b_ref_mode: "middle", // disabled/each/middle
+
+      // Adaptive Quantization
+      spatial_aq: true, // Spatial AQ: redistributes bitrate for details
+      temporal_aq: true, // Temporal AQ: redistributes bitrate for motion
+      aq_strength: 8, // AQ Strength: 1-15
+
+      // Advanced Codec Settings
+      profile: "main10", // main/main10/rext
+      pix_fmt: "p010le", // yuv420p (8-bit) / p010le (10-bit)
+      gop_size: 96, // GOP size (keyframe interval)
+      refs: 4, // Reference frames: 1-16
+
+      // CPU Fallback Settings
       cpu_preset: "medium",
       crf: 23,
-      audio_codec: "copy",
-      audio_bitrate: 192,
       two_pass: true,
       tune: null,
-      profile: "main10",
+
+      // Audio Settings
+      audio_codec: "copy",
+      audio_bitrate: 192,
     },
     remote: {
       transfer_method: "auto",
@@ -98,6 +113,31 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
   const [connectionStatus, setConnectionStatus] = useState({ testing: false, message: "", success: null });
   const [webdavConnectionStatus, setWebdavConnectionStatus] = useState({ testing: false, message: "", success: null });
 
+  // Preset management state
+  const [availablePresets, setAvailablePresets] = useState([]);
+  const [selectedPreset, setSelectedPreset] = useState("");
+  const [newPresetName, setNewPresetName] = useState("");
+  const [loadingPresets, setLoadingPresets] = useState(false);
+
+  // Load available presets on mount
+  React.useEffect(() => {
+    loadPresetList();
+  }, []);
+
+  const loadPresetList = async () => {
+    try {
+      setLoadingPresets(true);
+      const result = await window.electronAPI.presetList();
+      if (result.success) {
+        setAvailablePresets(result.presets || []);
+      }
+    } catch (error) {
+      console.error("Failed to load preset list:", error);
+    } finally {
+      setLoadingPresets(false);
+    }
+  };
+
   const updateConfig = (path, value) => {
     const newConfig = { ...config };
     const keys = path.split(".");
@@ -115,6 +155,99 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
     if (!newConfig[parent]) newConfig[parent] = {};
     newConfig[parent] = { ...newConfig[parent], [key]: value };
     setConfig(newConfig);
+  };
+
+  // Preset management functions
+  const saveNewPreset = async () => {
+    if (!newPresetName.trim()) {
+      alert("❌ Veuillez entrer un nom pour le preset");
+      return;
+    }
+
+    try {
+      // Extract FFmpeg settings
+      const ffmpegPreset = {
+        ffmpeg: config.ffmpeg,
+        encode_preset: config.encode_preset,
+        cq: config.cq,
+        cpu_preset: config.cpu_preset,
+        cpu_crf: config.cpu_crf,
+      };
+
+      const result = await window.electronAPI.presetSave(newPresetName.trim(), ffmpegPreset);
+
+      if (result.success) {
+        alert(`✅ Preset "${result.name}" sauvegardé sur le serveur!\n\nFichier: ${result.path}`);
+        setNewPresetName("");
+        await loadPresetList();
+      } else {
+        alert(`❌ Erreur lors de la sauvegarde: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error saving preset:", error);
+      alert(`❌ Erreur: ${error.message}`);
+    }
+  };
+
+  const loadSelectedPreset = async () => {
+    if (!selectedPreset) {
+      alert("❌ Veuillez sélectionner un preset à charger");
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.presetLoad(selectedPreset);
+
+      if (result.success) {
+        const preset = result.preset;
+
+        if (preset.ffmpeg) {
+          setConfig((prev) => ({
+            ...prev,
+            ffmpeg: preset.ffmpeg,
+            encode_preset: preset.encode_preset || prev.encode_preset,
+            cq: preset.cq || prev.cq,
+            cpu_preset: preset.cpu_preset || prev.cpu_preset,
+            cpu_crf: preset.cpu_crf || prev.cpu_crf,
+          }));
+
+          alert(`✅ Preset "${selectedPreset}" chargé depuis le serveur!\n\nSauvegardé le: ${new Date(preset.saved_at).toLocaleString()}`);
+        } else {
+          alert("⚠️ Le preset chargé ne contient pas de paramètres FFmpeg valides");
+        }
+      } else {
+        alert(`❌ Erreur lors du chargement: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error loading preset:", error);
+      alert(`❌ Erreur: ${error.message}`);
+    }
+  };
+
+  const deleteSelectedPreset = async () => {
+    if (!selectedPreset) {
+      alert("❌ Veuillez sélectionner un preset à supprimer");
+      return;
+    }
+
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer le preset "${selectedPreset}" ?\n\nCette action est irréversible.`)) {
+      return;
+    }
+
+    try {
+      const result = await window.electronAPI.presetDelete(selectedPreset);
+
+      if (result.success) {
+        alert(`✅ Preset "${selectedPreset}" supprimé du serveur`);
+        setSelectedPreset("");
+        await loadPresetList();
+      } else {
+        alert(`❌ Erreur lors de la suppression: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error deleting preset:", error);
+      alert(`❌ Erreur: ${error.message}`);
+    }
   };
 
   const saveFFmpegPresetToServer = async () => {
@@ -253,19 +386,64 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
         <div className="h-[650px] overflow-y-auto p-6 space-y-6">
           {activeTab === "ffmpeg" && (
             <>
-              {/* ===== PRESET MANAGEMENT ===== */}
-              <div className="bg-gray-800 border border-gray-600 rounded-lg p-4">
+              {/* ===== PRESET MANAGEMENT - MULTIPLE PRESETS ===== */}
+              <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 space-y-4">
                 <h3 className="text-md font-semibold text-white mb-3">📦 Gestion des Présets FFmpeg</h3>
-                <div className="flex gap-3">
-                  <button onClick={saveFFmpegPresetToServer} className="btn-success flex-1" title="Sauvegarder les paramètres FFmpeg actuels sur le serveur">
-                    📤 Sauvegarder sur serveur
-                  </button>
-                  <button onClick={loadFFmpegPresetFromServer} className="btn-secondary flex-1" title="Charger les paramètres FFmpeg depuis le serveur">
-                    📥 Charger depuis serveur
-                  </button>
+
+                {/* List and Load Presets */}
+                <div className="space-y-2">
+                  <label className="block text-sm text-gray-300">Présets disponibles sur le serveur ({availablePresets.length})</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedPreset}
+                      onChange={(e) => setSelectedPreset(e.target.value)}
+                      className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                      disabled={loadingPresets}
+                    >
+                      <option value="">-- Sélectionner un preset --</option>
+                      {availablePresets.map((preset) => (
+                        <option key={preset.name} value={preset.name}>
+                          {preset.name} {preset.modified ? `(${new Date(preset.modified).toLocaleDateString()})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button onClick={loadPresetList} className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded" title="Rafraîchir la liste" disabled={loadingPresets}>
+                      🔄
+                    </button>
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button onClick={loadSelectedPreset} className="btn-secondary flex-1" disabled={!selectedPreset} title="Charger le preset sélectionné">
+                      📥 Charger
+                    </button>
+                    <button onClick={deleteSelectedPreset} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded" disabled={!selectedPreset} title="Supprimer le preset sélectionné">
+                      🗑️ Supprimer
+                    </button>
+                  </div>
                 </div>
-                <p className="text-xs text-gray-400 mt-2">
-                  Les présets sont sauvegardés dans <code>ffmpeg_preset.json</code> à la racine du serveur WebDAV/SFTP
+
+                {/* Save New Preset */}
+                <div className="space-y-2 pt-3 border-t border-gray-700">
+                  <label className="block text-sm text-gray-300">Sauvegarder la configuration actuelle comme nouveau preset</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={newPresetName}
+                      onChange={(e) => setNewPresetName(e.target.value)}
+                      placeholder="Nom du preset (ex: HEVC_Quality, H264_Fast...)"
+                      className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                      onKeyPress={(e) => {
+                        if (e.key === "Enter") saveNewPreset();
+                      }}
+                    />
+                    <button onClick={saveNewPreset} className="btn-success px-4" disabled={!newPresetName.trim()} title="Sauvegarder comme nouveau preset">
+                      💾 Sauvegarder
+                    </button>
+                  </div>
+                </div>
+
+                <p className="text-xs text-gray-400">
+                  Les présets sont sauvegardés dans <code>/presets/ffmpeg_*.json</code> sur le serveur WebDAV/SFTP
                 </p>
               </div>
 
@@ -310,20 +488,40 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                       CQ - Constant Quality
                       <span className="ml-2 text-xs text-blue-400">(0-51)</span>
                     </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="51"
-                      value={config.ffmpeg?.cq || 18}
-                      onChange={(e) => updateConfigNested("ffmpeg", "cq", parseInt(e.target.value))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.cq || 24);
+                          updateConfigNested("ffmpeg", "cq", Math.max(0, current - 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        max="51"
+                        value={config.ffmpeg?.cq || 24}
+                        onChange={(e) => updateConfigNested("ffmpeg", "cq", parseInt(e.target.value))}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.cq || 24);
+                          updateConfigNested("ffmpeg", "cq", Math.min(51, current + 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">
                       <strong>Min:</strong> 0 (lossless, énorme) | <strong>Max:</strong> 51 (qualité minimale)
                       <br />
                       <strong>Recommandé:</strong> 18-20 (haute qualité), 22-24 (équilibré), 26-28 (économie)
                       <br />
-                      <em>Facteur de qualité constant - plus bas = meilleure qualité mais fichiers plus gros</em>
+                      <em>Facteur de qualité constant - plus bas = meilleure qualité (ajustable par ±1)</em>
                     </p>
                   </div>
 
@@ -353,9 +551,9 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                         if (gpuLimit === 100) {
                           return (
                             <>
-                              <strong>🔥 Max Speed:</strong> Unlimited FPS - Full GPU power
+                              <strong>Max Speed:</strong> Unlimited FPS - Full GPU power
                               <br />
-                              <em>✅ Maximum encoding speed | ✅ 100% quality preserved | GPU usage: ~100%</em>
+                              <em>Maximum encoding speed | 100% quality preserved | GPU usage: ~100%</em>
                             </>
                           );
                         } else if (gpuLimit > 75) {
@@ -413,43 +611,91 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
 
                   <div>
                     <label className="block text-sm text-gray-300 mb-2">
-                      Bitrate Moyen
-                      <span className="ml-2 text-xs text-blue-400">(ex: 3M, 5M, 10M)</span>
+                      Bitrate Moyen (Mbps)
+                      <span className="ml-2 text-xs text-blue-400">(Mégabits/seconde)</span>
                     </label>
-                    <input
-                      type="text"
-                      value={config.ffmpeg?.bitrate || "5M"}
-                      onChange={(e) => updateConfigNested("ffmpeg", "bitrate", e.target.value)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                      placeholder="5M"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseFloat(config.ffmpeg?.bitrate?.replace("M", "") || "5");
+                          const newValue = Math.max(0.5, current - 0.1).toFixed(1);
+                          updateConfigNested("ffmpeg", "bitrate", newValue + "M");
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        max="50"
+                        value={parseFloat(config.ffmpeg?.bitrate?.replace("M", "") || "5")}
+                        onChange={(e) => updateConfigNested("ffmpeg", "bitrate", e.target.value + "M")}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseFloat(config.ffmpeg?.bitrate?.replace("M", "") || "5");
+                          const newValue = Math.min(50, current + 0.1).toFixed(1);
+                          updateConfigNested("ffmpeg", "bitrate", newValue + "M");
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">
-                      <strong>720p:</strong> 2-3M | <strong>1080p:</strong> 4-6M | <strong>4K:</strong> 15-25M
+                      <strong>720p:</strong> 2-3 | <strong>1080p:</strong> 4-6 | <strong>4K:</strong> 15-25
                       <br />
-                      <strong>Recommandé 1080p:</strong> 5M (équilibre qualité/taille)
+                      <strong>Recommandé 1080p:</strong> 5 Mbps (équilibre qualité/taille)
                       <br />
-                      <em>Débit binaire cible en Mégabits par seconde (M = millions de bits/s)</em>
+                      <em>Débit binaire vidéo cible (ajustable par ±0.1)</em>
                     </p>
                   </div>
 
                   <div>
                     <label className="block text-sm text-gray-300 mb-2">
-                      Maxrate - Débit Maximum
+                      Maxrate - Débit Maximum (Mbps)
                       <span className="ml-2 text-xs text-blue-400">(pics autorisés)</span>
                     </label>
-                    <input
-                      type="text"
-                      value={config.ffmpeg?.maxrate || "5M"}
-                      onChange={(e) => updateConfigNested("ffmpeg", "maxrate", e.target.value)}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                      placeholder="10M"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseFloat(config.ffmpeg?.maxrate?.replace("M", "") || "8");
+                          const newValue = Math.max(0.5, current - 0.1).toFixed(1);
+                          updateConfigNested("ffmpeg", "maxrate", newValue + "M");
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.5"
+                        max="100"
+                        value={parseFloat(config.ffmpeg?.maxrate?.replace("M", "") || "8")}
+                        onChange={(e) => updateConfigNested("ffmpeg", "maxrate", e.target.value + "M")}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseFloat(config.ffmpeg?.maxrate?.replace("M", "") || "8");
+                          const newValue = Math.min(100, current + 0.1).toFixed(1);
+                          updateConfigNested("ffmpeg", "maxrate", newValue + "M");
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">
                       <strong>Recommandé:</strong> 1.5-2x le bitrate moyen
                       <br />
                       Évite les pics de bitrate trop élevés (scènes complexes)
                       <br />
-                      <em>Limite le débit maximum autorisé pour éviter les sautes de qualité</em>
+                      <em>Limite le débit maximum autorisé (ajustable par ±0.1)</em>
                     </p>
                   </div>
 
@@ -458,20 +704,40 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                       Lookahead Frames
                       <span className="ml-2 text-xs text-blue-400">(0-32)</span>
                     </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="32"
-                      value={config.ffmpeg?.lookahead || 32}
-                      onChange={(e) => updateConfigNested("ffmpeg", "lookahead", parseInt(e.target.value))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.lookahead || 32);
+                          updateConfigNested("ffmpeg", "lookahead", Math.max(0, current - 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        max="32"
+                        value={config.ffmpeg?.lookahead || 32}
+                        onChange={(e) => updateConfigNested("ffmpeg", "lookahead", parseInt(e.target.value))}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.lookahead || 32);
+                          updateConfigNested("ffmpeg", "lookahead", Math.min(32, current + 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">
                       <em>Nombre de frames analysées à l'avance pour optimiser l'allocation du bitrate</em>
                       <br />
                       <strong>Min:</strong> 0 (désactivé) | <strong>Max:</strong> 32 frames
                       <br />
-                      <strong>Recommandé:</strong> 32 (meilleure allocation du bitrate)
+                      <strong>Recommandé:</strong> 32 (meilleure allocation du bitrate) | Ajustable par ±1
                     </p>
                   </div>
 
@@ -480,20 +746,40 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                       B-Frames (Bidirectional)
                       <span className="ml-2 text-xs text-blue-400">(0-4)</span>
                     </label>
-                    <input
-                      type="number"
-                      min="0"
-                      max="4"
-                      value={config.ffmpeg?.bframes || 3}
-                      onChange={(e) => updateConfigNested("ffmpeg", "bframes", parseInt(e.target.value))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.bframes || 3);
+                          updateConfigNested("ffmpeg", "bframes", Math.max(0, current - 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="0"
+                        max="4"
+                        value={config.ffmpeg?.bframes || 3}
+                        onChange={(e) => updateConfigNested("ffmpeg", "bframes", parseInt(e.target.value))}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.bframes || 3);
+                          updateConfigNested("ffmpeg", "bframes", Math.min(4, current + 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">
                       <em>Frames bidirectionnelles pour meilleure compression (référencent passé et futur)</em>
                       <br />
                       <strong>Min:</strong> 0 (aucune) | <strong>Max:</strong> 4 (NVENC limité)
                       <br />
-                      <strong>Recommandé:</strong> 3 (bon compromis compression/compatibilité)
+                      <strong>Recommandé:</strong> 3 (bon compromis compression/compatibilité) | Ajustable par ±1
                     </p>
                   </div>
 
@@ -523,20 +809,40 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                       AQ Strength - Force Quantification Adaptive
                       <span className="ml-2 text-xs text-blue-400">(1-15)</span>
                     </label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="15"
-                      value={config.ffmpeg?.aq_strength || 8}
-                      onChange={(e) => updateConfigNested("ffmpeg", "aq_strength", parseInt(e.target.value))}
-                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.aq_strength || 8);
+                          updateConfigNested("ffmpeg", "aq_strength", Math.max(1, current - 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        max="15"
+                        value={config.ffmpeg?.aq_strength || 8}
+                        onChange={(e) => updateConfigNested("ffmpeg", "aq_strength", parseInt(e.target.value))}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.aq_strength || 8);
+                          updateConfigNested("ffmpeg", "aq_strength", Math.min(15, current + 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
                     <p className="text-xs text-gray-400 mt-1">
                       <em>Intensité de la quantification adaptative pour préserver les détails</em>
                       <br />
                       <strong>Min:</strong> 1 (faible) | <strong>Max:</strong> 15 (très fort)
                       <br />
-                      <strong>Recommandé:</strong> 8 (équilibre détails/uniformité)
+                      <strong>Recommandé:</strong> 8 (équilibre détails/uniformité) | Ajustable par ±1
                     </p>
                   </div>
                   <div>
@@ -596,6 +902,112 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                       <em>Adapte le bitrate selon la complexité spatiale (détails dans l'image)</em>
                       <br />
                       <strong>Recommandé:</strong> Activé (améliore les zones détaillées)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">
+                      Pixel Format - Profondeur de couleur
+                      <span className="ml-2 text-xs text-blue-400">(yuv420p/p010le)</span>
+                    </label>
+                    <select
+                      value={config.ffmpeg?.pix_fmt || "p010le"}
+                      onChange={(e) => updateConfigNested("ffmpeg", "pix_fmt", e.target.value)}
+                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                    >
+                      <option value="yuv420p">yuv420p (8-bit, compatible)</option>
+                      <option value="p010le">p010le (10-bit, meilleure qualité - Recommandé)</option>
+                    </select>
+                    <p className="text-xs text-gray-400 mt-1">
+                      <em>Format de pixel en sortie - 10-bit offre de meilleurs dégradés</em>
+                      <br />
+                      <strong>Recommandé:</strong> p010le (10-bit, meilleure précision couleurs)
+                      <br />
+                      8-bit = compatible universel | 10-bit = dégradés plus fluides
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">
+                      GOP Size - Intervalle Keyframes
+                      <span className="ml-2 text-xs text-blue-400">(24-300)</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.gop_size || 96);
+                          updateConfigNested("ffmpeg", "gop_size", Math.max(24, current - 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="24"
+                        max="300"
+                        value={config.ffmpeg?.gop_size || 96}
+                        onChange={(e) => updateConfigNested("ffmpeg", "gop_size", parseInt(e.target.value))}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.gop_size || 96);
+                          updateConfigNested("ffmpeg", "gop_size", Math.min(300, current + 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      <em>Intervalle entre deux images clés (I-frames) pour la compression</em>
+                      <br />
+                      <strong>Recommandé:</strong> 96 pour 24-30fps | 120 pour 60fps
+                      <br />
+                      Grand GOP = meilleure compression | Petit GOP = meilleure navigation | Ajustable par ±1
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">
+                      Reference Frames - Images de référence
+                      <span className="ml-2 text-xs text-blue-400">(1-16)</span>
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.refs || 4);
+                          updateConfigNested("ffmpeg", "refs", Math.max(1, current - 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        -
+                      </button>
+                      <input
+                        type="number"
+                        min="1"
+                        max="16"
+                        value={config.ffmpeg?.refs || 4}
+                        onChange={(e) => updateConfigNested("ffmpeg", "refs", parseInt(e.target.value))}
+                        className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white text-center"
+                      />
+                      <button
+                        onClick={() => {
+                          const current = parseInt(config.ffmpeg?.refs || 4);
+                          updateConfigNested("ffmpeg", "refs", Math.min(16, current + 1));
+                        }}
+                        className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded font-bold"
+                      >
+                        +
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400 mt-1">
+                      <em>Nombre d'images utilisées comme référence pour prédiction inter-trames</em>
+                      <br />
+                      <strong>Recommandé:</strong> 4 (bon compromis compression/vitesse)
+                      <br />
+                      Plus de refs = meilleure compression mais plus lent | Ajustable par ±1
                     </p>
                   </div>
                 </div>

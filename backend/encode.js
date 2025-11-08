@@ -405,14 +405,23 @@ class VideoEncoder extends EventEmitter {
 
               let currentTime = 0;
               let percent = 0;
+              let adjustedTotalFrames = totalFrames; // Track adjusted total if needed
 
               if (progress.frames && totalFrames > 0) {
                 // Method 1: Use frames (most reliable for NVENC)
                 const framesProcessed = parseInt(progress.frames) || 0;
-                percent = (framesProcessed / totalFrames) * 100;
+
+                // If we exceed expected frames, adjust the total dynamically
+                // This happens with VFR videos, interlaced content, or incorrect FPS detection
+                if (framesProcessed > totalFrames) {
+                  adjustedTotalFrames = framesProcessed; // Use actual frame count as new total
+                  logger.debug(`[NVENC Progress] Adjusted total frames from ${totalFrames} to ${adjustedTotalFrames} (FPS mismatch)`);
+                }
+
+                percent = Math.min(100, (framesProcessed / adjustedTotalFrames) * 100);
                 currentTime = framesProcessed / videoInfo.video.fps;
 
-                logger.debug(`[NVENC Progress] Frames: ${framesProcessed}/${totalFrames} (${percent.toFixed(2)}%)`);
+                logger.debug(`[NVENC Progress] Frames: ${framesProcessed}/${adjustedTotalFrames} (${percent.toFixed(2)}%)`);
               } else if (progress.timemark) {
                 // Method 2: Fallback to timemark parsing (CPU encoding or when frames not available)
                 const timeParts = progress.timemark.split(":");
@@ -421,7 +430,7 @@ class VideoEncoder extends EventEmitter {
                 const seconds = parseFloat(timeParts[2]) || 0;
 
                 currentTime = hours * 3600 + minutes * 60 + seconds;
-                percent = totalDuration > 0 ? (currentTime / totalDuration) * 100 : 0;
+                percent = totalDuration > 0 ? Math.min(100, (currentTime / totalDuration) * 100) : 0;
               }
 
               const elapsedSeconds = (Date.now() - this.startTime) / 1000;

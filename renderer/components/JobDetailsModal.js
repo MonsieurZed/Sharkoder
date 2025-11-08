@@ -85,61 +85,59 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
   const useCurrentConfig = !params && userConfig?.ffmpeg;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-gray-800 rounded-lg max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div className="sticky top-0 bg-gray-800 border-b border-gray-700 px-6 py-4 flex items-center justify-between z-10">
-          <h2 className="text-xl font-bold text-white">📊 Encoding Details</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-2xl leading-none">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-2" onClick={onClose}>
+      <div className="bg-gray-800 rounded-lg max-w-5xl w-full max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+        {/* Header - Fixed */}
+        <div className="flex-shrink-0 bg-gray-800 border-b border-gray-700 px-4 py-2 flex items-center justify-between rounded-t-lg">
+          <h2 className="text-lg font-bold text-white">📊 Encoding Details</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none hover:bg-gray-700 rounded px-1.5">
             ✕
           </button>
         </div>
 
-        {/* Content */}
-        <div className="p-6 space-y-4">
-          {/* File Name */}
-          <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
-            <div className="text-sm text-gray-400 mb-1">File</div>
-            <div className="text-white font-mono break-all">{job.filename}</div>
-          </div>
-
+        {/* Content - Scrollable */}
+        <div className="flex-1 overflow-y-auto p-3 space-y-2">
           {/* File Paths */}
-          <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
-            <div className="text-sm text-purple-400 font-semibold mb-3 flex items-center gap-2">
-              <span className="text-lg">📁</span>
+          <div className="bg-gray-900 rounded-lg p-2 border border-gray-700">
+            <div className="text-xs text-purple-400 font-semibold mb-1.5 flex items-center gap-1">
+              <span>📁</span>
               <span>File Paths</span>
             </div>
-            <div className="space-y-2 text-xs">
+            <div className="space-y-1 text-xs">
               <div>
-                <div className="text-gray-400 mb-1">🌐 Remote Path (Original):</div>
-                <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.remote_path || "N/A"}</div>
+                <div className="text-gray-400">🌐 Remote:</div>
+                <div className="text-white font-mono bg-gray-800 px-2 py-1 rounded break-all">{job.filepath || "N/A"}</div>
               </div>
               <div>
-                <div className="text-gray-400 mb-1">💾 Local Path (Downloaded):</div>
-                <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.local_path || "N/A"}</div>
+                <div className="text-gray-400">💾 Downloaded:</div>
+                <div className="text-white font-mono bg-gray-800 px-2 py-1 rounded break-all">{job.local_original_path || "N/A"}</div>
               </div>
               <div>
-                <div className="text-gray-400 mb-1">🎬 Encoded Path (Transcoded):</div>
-                <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.encoded_path || "N/A"}</div>
+                <div className="text-gray-400">🎬 Encoded:</div>
+                <div className="text-white font-mono bg-gray-800 px-2 py-1 rounded break-all">{job.local_encoded_path || "N/A"}</div>
               </div>
-              {job.backup_path && (
+              <div>
+                <div className="text-gray-400">📤 Uploaded:</div>
+                <div className="text-white font-mono bg-gray-800 px-2 py-1 rounded break-all">{job.server_encoded_path || "N/A"}</div>
+              </div>
+              {job.server_backup_path && (
                 <div>
-                  <div className="text-gray-400 mb-1">🔒 Backup Path (Original Saved):</div>
-                  <div className="text-white font-mono bg-gray-800 px-3 py-2 rounded break-all">{job.backup_path}</div>
+                  <div className="text-gray-400">🔒 Backup:</div>
+                  <div className="text-white font-mono bg-gray-800 px-2 py-1 rounded break-all">{job.server_backup_path}</div>
                 </div>
               )}
             </div>
           </div>
 
           {/* Before/After/Savings Grid */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-3 gap-2">
             {/* BEFORE */}
-            <div className="bg-red-900 bg-opacity-20 border border-red-700 rounded-lg p-3">
-              <div className="text-red-400 font-semibold mb-3 flex items-center gap-2 text-sm">
-                <span className="text-lg">📥</span>
-                <span>Before Encoding</span>
+            <div className="bg-red-900 bg-opacity-20 border border-red-700 rounded-lg p-2">
+              <div className="text-red-400 font-semibold mb-1.5 flex items-center gap-1 text-xs">
+                <span>📥</span>
+                <span>Before</span>
               </div>
-              <div className="space-y-1.5 text-xs">
+              <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Codec:</span>
                   <span className="text-white font-mono">{job.codec_before || "Unknown"}</span>
@@ -170,7 +168,7 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
                   <span className="text-gray-400">Container:</span>
                   <span className="text-white font-mono">{job.container || "MKV"}</span>
                 </div>
-                <div className="flex justify-between border-t border-red-900 pt-1.5 mt-1.5">
+                <div className="flex justify-between border-t border-red-900 pt-1 mt-1">
                   <span className="text-gray-400 font-semibold">Size:</span>
                   <span className="text-red-300 font-mono font-bold">{formatSize(job.size)}</span>
                 </div>
@@ -178,12 +176,12 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
             </div>
 
             {/* AFTER */}
-            <div className="bg-green-900 bg-opacity-20 border border-green-700 rounded-lg p-3">
-              <div className="text-green-400 font-semibold mb-3 flex items-center gap-2 text-sm">
-                <span className="text-lg">📤</span>
-                <span>After Encoding</span>
+            <div className="bg-green-900 bg-opacity-20 border border-green-700 rounded-lg p-2">
+              <div className="text-green-400 font-semibold mb-1.5 flex items-center gap-1 text-xs">
+                <span>📤</span>
+                <span>After</span>
               </div>
-              <div className="space-y-1.5 text-xs">
+              <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Codec:</span>
                   <span className="text-white font-mono">{job.codec_after || "HEVC (x265)"}</span>
@@ -212,7 +210,7 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
                   <span className="text-gray-400">Container:</span>
                   <span className="text-white font-mono">{job.container || "MKV"}</span>
                 </div>
-                <div className="flex justify-between border-t border-green-900 pt-1.5 mt-1.5">
+                <div className="flex justify-between border-t border-green-900 pt-1 mt-1">
                   <span className="text-gray-400 font-semibold">Size:</span>
                   <span className="text-green-300 font-mono font-bold">{formatSize(job.size_after)}</span>
                 </div>
@@ -220,12 +218,12 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
             </div>
 
             {/* SAVINGS */}
-            <div className="bg-purple-900 bg-opacity-20 border border-purple-700 rounded-lg p-3">
-              <div className="text-purple-400 font-semibold mb-3 flex items-center gap-2 text-sm">
-                <span className="text-lg">💾</span>
-                <span>Savings & Timing</span>
+            <div className="bg-purple-900 bg-opacity-20 border border-purple-700 rounded-lg p-2">
+              <div className="text-purple-400 font-semibold mb-1.5 flex items-center gap-1 text-xs">
+                <span>💾</span>
+                <span>Savings</span>
               </div>
-              <div className="space-y-1.5 text-xs">
+              <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Difference:</span>
                   <span className={`font-mono font-bold ${isSavings ? "text-green-400" : "text-red-400"}`}>
@@ -240,7 +238,7 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
                     {Math.abs(percent)}%
                   </span>
                 </div>
-                <div className="flex justify-between border-t border-purple-900 pt-1.5 mt-1.5">
+                <div className="flex justify-between border-t border-purple-900 pt-1 mt-1">
                   <span className="text-gray-400">⏬ Download:</span>
                   <span className="text-white font-mono">{formatDuration(downloadTime)}</span>
                 </div>
@@ -252,7 +250,7 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
                   <span className="text-gray-400">⏫ Upload:</span>
                   <span className="text-white font-mono">{formatDuration(uploadTime)}</span>
                 </div>
-                <div className="flex justify-between border-t border-purple-900 pt-1.5 mt-1.5">
+                <div className="flex justify-between border-t border-purple-900 pt-1 mt-1">
                   <span className="text-gray-400 font-semibold">⏱️ Total:</span>
                   <span className="text-purple-300 font-mono font-bold">{formatDuration(totalTime)}</span>
                 </div>
@@ -262,16 +260,16 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
 
           {/* Encoding Settings Used */}
           {!params && !useCurrentConfig ? (
-            <div className="bg-gray-800 rounded-lg p-3 border border-gray-700">
-              <div className="text-gray-400 text-sm">⚠️ Encoding parameters not available for this job</div>
+            <div className="bg-gray-800 rounded-lg p-2 border border-gray-700">
+              <div className="text-gray-400 text-xs">⚠️ Encoding parameters not available for this job</div>
             </div>
           ) : (
-            <div className="bg-blue-900 bg-opacity-20 border border-blue-700 rounded-lg p-3">
-              <div className="text-blue-400 font-semibold mb-3 flex items-center gap-2">
-                <span className="text-xl">⚙️</span>
-                <span>Encoding Parameters {params ? "Used" : "(Current Config - Not Saved)"}</span>
+            <div className="bg-blue-900 bg-opacity-20 border border-blue-700 rounded-lg p-2">
+              <div className="text-blue-400 font-semibold mb-1.5 flex items-center gap-1 text-xs">
+                <span>⚙️</span>
+                <span>Encoding Parameters {params ? "Used" : "(Current)"}</span>
               </div>
-              <div className="grid grid-cols-2 gap-x-6 gap-y-2 text-xs">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-gray-400">Encoder:</span>
                   <span className="text-white font-medium">
@@ -369,9 +367,9 @@ window.JobDetailsModal = ({ job, userConfig, onClose }) => {
           )}
         </div>
 
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-gray-800 border-t border-gray-700 px-6 py-4 flex justify-end">
-          <button onClick={onClose} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded transition-colors">
+        {/* Footer - Fixed */}
+        <div className="flex-shrink-0 bg-gray-800 border-t border-gray-700 px-4 py-2 flex justify-end rounded-b-lg">
+          <button onClick={onClose} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition-colors font-medium text-sm">
             Close
           </button>
         </div>

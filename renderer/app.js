@@ -127,6 +127,47 @@ const App = () => {
         // WebDAV connection is handled by FileTree component
         // No need to connect here to avoid duplicate connections
 
+        // Check cache age and auto-sync if needed
+        try {
+          const needsRefreshResult = await window.electronAPI.cacheNeedsRefresh(24);
+          if (needsRefreshResult.success && needsRefreshResult.needsRefresh) {
+            const cacheStats = await window.electronAPI.cacheGetStats();
+            if (cacheStats.success && cacheStats.stats.fileCount > 0) {
+              // Cache exists but is old
+              const ageHours = Math.round((Date.now() - cacheStats.stats.lastSync) / (1000 * 60 * 60));
+
+              if (ageHours > 24) {
+                // Show dialog for > 24h
+                const shouldSync = confirm(`Cache is ${ageHours} hours old.\n\nWould you like to refresh it now?\n\n` + `This will update file information in the background.`);
+                if (shouldSync) {
+                  console.log("[App] User confirmed cache refresh");
+                  window.electronAPI
+                    .cacheSync("/")
+                    .then((result) => {
+                      if (result.success) {
+                        console.log(`[App] Cache synced: ${result.result.updated} updated, ${result.result.added} added, ${result.result.deleted} deleted`);
+                      }
+                    })
+                    .catch((err) => console.error("[App] Cache sync failed:", err));
+                }
+              } else if (ageHours > 1) {
+                // Auto-sync silently for 1-24h
+                console.log(`[App] Cache is ${ageHours}h old, starting background sync...`);
+                window.electronAPI
+                  .cacheSync("/")
+                  .then((result) => {
+                    if (result.success) {
+                      console.log(`[App] Background sync complete: ${result.result.updated} updated, ${result.result.added} added, ${result.result.deleted} deleted`);
+                    }
+                  })
+                  .catch((err) => console.error("[App] Background sync failed:", err));
+              }
+            }
+          }
+        } catch (error) {
+          console.warn("Cache age check failed:", error);
+        }
+
         // Small delay to show the loading animation
         setTimeout(() => setIsLoading(false), 1000);
       } catch (error) {

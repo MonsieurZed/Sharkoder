@@ -106,6 +106,14 @@
       "_timeout_info": "In milliseconds (30000 = 30 seconds)"
     },
 
+    "_comment_cache": "Cache & Indexation Performance",
+    "cache": {
+      "concurrent_video_probes": 10,
+      "_concurrent_probes_range": "1-20, number of simultaneous video probes (10x faster indexation)",
+      "probe_timeout_ms": 10000,
+      "_probe_timeout_info": "Timeout per video probe in milliseconds (10000 = 10 seconds)"
+    },
+
     "_comment_behavior": "Behavior & Safety Settings",
     "behavior": {
       "log_level": "info",

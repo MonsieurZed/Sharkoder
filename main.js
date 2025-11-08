@@ -34,6 +34,7 @@ const { initDatabase } = require("./backend/db");
 const { QueueManager } = require("./backend/queue");
 const { TransferManager } = require("./backend/transfer");
 const { ProgressFileManager } = require("./backend/progressfile");
+const CacheManager = require("./backend/cache");
 const { logger, formatBytes } = require("./backend/utils");
 const configManager = require("./backend/config");
 
@@ -42,6 +43,7 @@ let tray;
 let queueManager;
 let transferManager; // Unified SFTP/WebDAV manager
 let progressFileManager;
+let cacheManager; // Server-side cache manager
 
 // Hook logger to send logs to renderer
 const originalLoggerMethods = {
@@ -606,15 +608,425 @@ const setupIpcHandlers = () => {
   });
 
   // Legacy support - keep old handlers for backward compatibility
-  ipcMain.handle("preset:saveFFmpeg", async (event, preset) => {
-    // Redirect to new preset:save with default name
-    return ipcMain.emit("preset:save", event, "default", preset);
+
+  // ====================
+  // LOCAL PRESET OPERATIONS
+  // ====================
+
+  ipcMain.handle("preset:listLocal", async (event) => {
+    try {
+      const presetsDir = path.join(__dirname, "presets");
+
+      // Ensure directory exists
+      await fs.ensureDir(presetsDir);
+
+      // Read all JSON files
+      const files = await fs.readdir(presetsDir);
+      const presetFiles = files.filter((f) => f.endsWith(".json"));
+
+      const presets = await Promise.all(
+        presetFiles.map(async (filename) => {
+          try {
+            const filePath = path.join(presetsDir, filename);
+            const content = await fs.readFile(filePath, "utf8");
+            const preset = JSON.parse(content);
+            const stats = await fs.stat(filePath);
+
+            return {
+              name: preset.name || filename.replace(/^preset_/, "").replace(/\.json$/, ""),
+              filename,
+              description: preset.description || "",
+              saved_at: preset.saved_at || stats.mtime.toISOString(),
+              ffmpeg: preset.ffmpeg,
+            };
+          } catch (error) {
+            logger.warn(`Failed to parse preset ${filename}:`, error.message);
+            return null;
+          }
+        })
+      );
+
+      const validPresets = presets.filter((p) => p !== null).sort((a, b) => a.name.localeCompare(b.name));
+
+      logger.info(`✅ Found ${validPresets.length} local presets`);
+      return { success: true, presets: validPresets };
+    } catch (error) {
+      logger.error("Failed to list local presets:", error);
+      return { success: false, error: error.message, presets: [] };
+    }
   });
 
-  ipcMain.handle("preset:loadFFmpeg", async (event) => {
-    // Redirect to new preset:load with default name
-    return ipcMain.emit("preset:load", event, "default");
+  ipcMain.handle("preset:saveLocal", async (event, presetName, presetData) => {
+    try {
+      const safeName = presetName.replace(/[^a-zA-Z0-9_\-]/g, "_");
+      if (!safeName) {
+        return { success: false, error: "Invalid preset name" };
+      }
+
+      const presetsDir = path.join(__dirname, "presets");
+      await fs.ensureDir(presetsDir);
+
+      const presetFile = path.join(presetsDir, `preset_${safeName}.json`);
+
+      const dataToSave = {
+        ...presetData,
+        name: safeName,
+        saved_at: new Date().toISOString(),
+        version: "1.0",
+      };
+
+      await fs.writeFile(presetFile, JSON.stringify(dataToSave, null, 2), "utf8");
+
+      logger.info(`✅ Saved local preset: ${safeName}`);
+      return { success: true, name: safeName, path: presetFile };
+    } catch (error) {
+      logger.error(`Failed to save local preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
   });
+
+  ipcMain.handle("preset:loadLocal", async (event, presetName) => {
+    try {
+      const presetsDir = path.join(__dirname, "presets");
+      const files = await fs.readdir(presetsDir);
+
+      // Find preset file (support both preset_NAME.json and NAME.json)
+      const filename = files.find((f) => f === `preset_${presetName}.json` || f === `${presetName}.json`);
+
+      if (!filename) {
+        return { success: false, error: `Preset "${presetName}" not found locally` };
+      }
+
+      const filePath = path.join(presetsDir, filename);
+      const content = await fs.readFile(filePath, "utf8");
+      const preset = JSON.parse(content);
+
+      logger.info(`✅ Loaded local preset: ${presetName}`);
+      return { success: true, preset };
+    } catch (error) {
+      logger.error(`Failed to load local preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("preset:deleteLocal", async (event, presetName) => {
+    try {
+      const presetsDir = path.join(__dirname, "presets");
+      const files = await fs.readdir(presetsDir);
+
+      // Find preset file
+      const filename = files.find((f) => f === `preset_${presetName}.json` || f === `${presetName}.json`);
+
+      if (!filename) {
+        return { success: false, error: `Preset "${presetName}" not found locally` };
+      }
+
+      const filePath = path.join(presetsDir, filename);
+      await fs.remove(filePath);
+
+      logger.info(`✅ Deleted local preset: ${presetName}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to delete local preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ====================
+  // REMOTE PRESET OPERATIONS
+  // ====================
+
+  ipcMain.handle("preset:listRemote", async (event) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      logger.info("📋 Listing remote presets...");
+
+      const files = await transferManager.listDirectory("/presets", { filterVideos: false });
+
+      const presets = await Promise.all(
+        files
+          .filter((file) => file.name.endsWith(".json"))
+          .map(async (file) => {
+            try {
+              // Extract name from filename
+              const name = file.name.replace(/^(preset_|ffmpeg_)/, "").replace(/\.json$/, "");
+
+              return {
+                name,
+                filename: file.name,
+                path: file.path,
+                size: file.size,
+                modified: file.modified,
+              };
+            } catch (error) {
+              return null;
+            }
+          })
+      );
+
+      const validPresets = presets.filter((p) => p !== null).sort((a, b) => a.name.localeCompare(b.name));
+
+      logger.info(`✅ Found ${validPresets.length} remote presets`);
+      return { success: true, presets: validPresets };
+    } catch (error) {
+      logger.error("Failed to list remote presets:", error);
+      return { success: true, presets: [] }; // Return empty if folder doesn't exist
+    }
+  });
+
+  ipcMain.handle("preset:loadRemote", async (event, presetName) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      const remotePath = `/presets/preset_${presetName}.json`;
+      const tempPath = path.join(require("./sharkoder.config.json").storage.local_temp, `temp_preset_${presetName}.json`);
+
+      const result = await transferManager.downloadFile(remotePath, tempPath);
+
+      if (result.success) {
+        const content = await fs.readFile(tempPath, "utf8");
+        const preset = JSON.parse(content);
+        await fs.remove(tempPath);
+
+        logger.info(`✅ Loaded remote preset: ${presetName}`);
+        return { success: true, preset };
+      } else {
+        return { success: false, error: result.error || "Download failed" };
+      }
+    } catch (error) {
+      logger.error(`Failed to load remote preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("preset:deleteRemote", async (event, presetName) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      const remotePath = `/presets/preset_${presetName}.json`;
+      await transferManager.deleteFile(remotePath);
+
+      logger.info(`✅ Deleted remote preset: ${presetName}`);
+      return { success: true };
+    } catch (error) {
+      logger.error(`Failed to delete remote preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ====================
+  // SYNC OPERATIONS (PUSH/PULL)
+  // ====================
+
+  ipcMain.handle("preset:push", async (event, presetName) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      // Load local preset
+      const localResult = await ipcMain.emit("preset:loadLocal", event, presetName);
+      const presetsDir = path.join(__dirname, "presets");
+      const files = await fs.readdir(presetsDir);
+      const filename = files.find((f) => f === `preset_${presetName}.json` || f === `${presetName}.json`);
+
+      if (!filename) {
+        return { success: false, error: `Local preset "${presetName}" not found` };
+      }
+
+      const localPath = path.join(presetsDir, filename);
+      const remotePath = `/presets/preset_${presetName}.json`;
+
+      // Disable backup for preset uploads
+      const originalBackupSetting = transferManager.config.advanced?.behavior?.create_backups;
+      if (transferManager.config.advanced?.behavior) {
+        transferManager.config.advanced.behavior.create_backups = false;
+      }
+
+      // Ensure /presets/ directory exists on server
+      try {
+        await transferManager.createDirectory("/presets");
+      } catch (error) {
+        // Directory might exist, that's fine
+      }
+
+      // Upload
+      const result = await transferManager.uploadFile(localPath, remotePath);
+
+      // Restore backup setting
+      if (transferManager.config.advanced?.behavior) {
+        transferManager.config.advanced.behavior.create_backups = originalBackupSetting;
+      }
+
+      if (result) {
+        logger.info(`✅ Pushed preset "${presetName}" to server`);
+        return { success: true };
+      } else {
+        return { success: false, error: "Upload failed" };
+      }
+    } catch (error) {
+      logger.error(`Failed to push preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle("preset:pull", async (event, presetName) => {
+    try {
+      if (!transferManager) {
+        return { success: false, error: "Transfer manager not initialized" };
+      }
+
+      const remotePath = `/presets/preset_${presetName}.json`;
+      const presetsDir = path.join(__dirname, "presets");
+      await fs.ensureDir(presetsDir);
+
+      const localPath = path.join(presetsDir, `preset_${presetName}.json`);
+
+      const result = await transferManager.downloadFile(remotePath, localPath);
+
+      if (result.success) {
+        logger.info(`✅ Pulled preset "${presetName}" from server`);
+        return { success: true };
+      } else {
+        return { success: false, error: result.error || "Download failed" };
+      }
+    } catch (error) {
+      logger.error(`Failed to pull preset "${presetName}":`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ============================================================================
+  // CACHE OPERATIONS
+  // ============================================================================
+
+  // Get cache statistics
+  ipcMain.handle("cache:getStats", async (event) => {
+    try {
+      const stats = await cacheManager.getCacheStats();
+      return { success: true, stats };
+    } catch (error) {
+      logger.error("Failed to get cache stats:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Check if cache needs refresh
+  ipcMain.handle("cache:needsRefresh", async (event, maxAgeHours = 24) => {
+    try {
+      const needsRefresh = await cacheManager.needsRefresh(maxAgeHours);
+      return { success: true, needsRefresh };
+    } catch (error) {
+      logger.error("Failed to check cache refresh:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Full indexation of server
+  ipcMain.handle("cache:fullIndex", async (event, rootPath = "/") => {
+    try {
+      logger.info(`[cache:fullIndex] Starting full indexation from: ${rootPath}`);
+
+      // Send progress updates to renderer
+      const onProgress = (progress) => {
+        if (mainWindow) {
+          mainWindow.webContents.send("cache:indexProgress", progress);
+        }
+      };
+
+      const result = await cacheManager.fullIndexation(rootPath, onProgress);
+
+      if (mainWindow) {
+        mainWindow.webContents.send("cache:indexComplete", result);
+      }
+
+      return { success: true, result };
+    } catch (error) {
+      logger.error("Failed to perform full indexation:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Incremental sync of directory
+  ipcMain.handle("cache:sync", async (event, dirPath = "/") => {
+    try {
+      logger.info(`[cache:sync] Starting incremental sync for: ${dirPath}`);
+      const result = await cacheManager.incrementalSync(dirPath);
+      return { success: true, result };
+    } catch (error) {
+      logger.error("Failed to perform incremental sync:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get cached directory contents
+  ipcMain.handle("cache:getDirectory", async (event, dirPath = "/") => {
+    try {
+      const items = await cacheManager.getCachedDirectory(dirPath);
+      return { success: true, items };
+    } catch (error) {
+      logger.error("Failed to get cached directory:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get folder stats from cache
+  ipcMain.handle("cache:getFolderStats", async (event, folderPath) => {
+    try {
+      const stats = await cacheManager.getCachedFolderStats(folderPath);
+      return { success: true, stats };
+    } catch (error) {
+      logger.error("Failed to get cached folder stats:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Global search across all paths
+  ipcMain.handle("cache:search", async (event, query, options = {}) => {
+    try {
+      logger.info(`[cache:search] Searching for: ${query}`);
+      const results = await cacheManager.searchGlobal(query, options);
+      return { success: true, results };
+    } catch (error) {
+      logger.error("Failed to perform search:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Invalidate cache for specific path
+  ipcMain.handle("cache:invalidate", async (event, itemPath) => {
+    try {
+      logger.info(`[cache:invalidate] Invalidating cache for: ${itemPath}`);
+      await cacheManager.invalidateCache(itemPath);
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to invalidate cache:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Clear entire cache
+  ipcMain.handle("cache:clear", async (event) => {
+    try {
+      logger.info("[cache:clear] Clearing entire cache");
+      await cacheManager.clearCache();
+      return { success: true };
+    } catch (error) {
+      logger.error("Failed to clear cache:", error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ============================================================================
+  // QUEUE OPERATIONS
+  // ============================================================================
 
   // Queue operations
   ipcMain.handle("queue:addJob", async (event, filePath, fileInfo) => {
@@ -1561,8 +1973,13 @@ app.whenReady().then(async () => {
     // Initialize managers
     const config = require("./sharkoder.config.json");
     transferManager = new TransferManager(config);
+    cacheManager = new CacheManager(transferManager);
     queueManager = new QueueManager(config, transferManager);
     progressFileManager = new ProgressFileManager(config, transferManager);
+
+    // Initialize cache system
+    await cacheManager.initCache();
+    logger.info("Cache system initialized");
 
     // Setup IPC handlers
     setupIpcHandlers();

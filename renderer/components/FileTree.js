@@ -53,16 +53,20 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
   const [currentPath, setCurrentPath] = useState("/");
   const [loading, setLoading] = useState(false);
   const [connected, setConnected] = useState(false);
-  const [calculatingSize, setCalculatingSize] = useState({});
-  const [searchTerm, setSearchTerm] = useState("");
+  // REMOVED: calculatingSize state - No longer needed with unified cache
+  // REMOVED: searchTerm state - Use global search (Search Everywhere) instead
   const [sortBy, setSortBy] = useState("alpha");
   const [loadingVideoInfo, setLoadingVideoInfo] = useState({});
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [downloading, setDownloading] = useState({});
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [calculatingStats, setCalculatingStats] = useState({ isCalculating: false, current: 0, total: 0 });
+  // REMOVED: calculatingStats state - Batch calculation no longer used
   const [sessionCache, setSessionCache] = useState({});
   const [loadedFromCache, setLoadedFromCache] = useState(false);
+  const [showGlobalSearch, setShowGlobalSearch] = useState(false);
+  const [globalSearchTerm, setGlobalSearchTerm] = useState("");
+  const [globalSearchResults, setGlobalSearchResults] = useState([]);
+  const [isSearching, setIsSearching] = useState(false);
 
   // Use a ref to hold sessionCache to avoid stale closures
   const sessionCacheRef = useRef({});
@@ -74,6 +78,27 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
   useEffect(() => {
     sessionCacheRef.current = sessionCache;
   }, [sessionCache]);
+
+  // Helper function to format bytes
+  const formatBytes = (bytes) => {
+    if (!bytes || bytes === 0) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  };
+
+  // Helper function to format duration (seconds to HH:MM:SS)
+  const formatDuration = (seconds) => {
+    if (!seconds || seconds === 0) return "0:00";
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = Math.floor(seconds % 60);
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+    }
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
+  };
 
   // Cache localStorage functions
   const CACHE_KEY = "webdav_folder_stats_cache_v4";
@@ -149,114 +174,8 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
     }
   };
 
-  const calculateFolderSize = async (folderPath, silent = false, forceRefresh = false) => {
-    try {
-      const cache = loadCache();
-
-      if (!forceRefresh && cache[folderPath]) {
-        const cachedStats = cache[folderPath];
-        if (cachedStats.upToDate !== false) {
-          if (!silent) {
-            console.log(`Using cached stats for ${folderPath}`);
-          }
-          return;
-        }
-      }
-
-      if (!silent) {
-        setCalculatingSize((prev) => ({ ...prev, [folderPath]: true }));
-      }
-
-      // Set includeDuration to false by default (too slow for large folders)
-      // User can force refresh with duration via the UI button
-      const includeDuration = forceRefresh;
-      console.log(`[FileTree] Calculating folder stats for ${folderPath}: forceRefresh=${forceRefresh}, includeDuration=${includeDuration}`);
-      const result = await window.electronAPI.webdavGetFolderStats(folderPath, includeDuration);
-
-      if (result.success) {
-        const statsWithDate = {
-          ...result.stats,
-          lastModified: new Date().toISOString(),
-          upToDate: true,
-        };
-
-        const latestCache = loadCache();
-        latestCache[folderPath] = statsWithDate;
-        saveCache(latestCache);
-
-        // DO NOT sync cache here - causes infinite loop during batch calculations
-        // Manual sync available via CacheManager or settings panel
-
-        setFiles((prevFiles) =>
-          prevFiles.map((file) => {
-            if (file.path === folderPath && file.type === "directory") {
-              return {
-                ...file,
-                size: result.stats.totalSize,
-                fileCount: result.stats.fileCount,
-                videoCount: result.stats.videoCount,
-                avgSize: result.stats.avgSize,
-                sizeFormatted: result.stats.totalSizeFormatted,
-                totalDuration: result.stats.totalDuration,
-                totalDurationFormatted: result.stats.totalDurationFormatted,
-                sizePerHour: result.stats.sizePerHour,
-                sizePerHourFormatted: result.stats.sizePerHourFormatted,
-                cached: true,
-                lastModified: statsWithDate.lastModified,
-                upToDate: true,
-              };
-            }
-            return file;
-          })
-        );
-
-        const folderDir = folderPath.substring(0, folderPath.lastIndexOf("/")) || "/";
-        console.log(`Updating session cache for folder "${folderPath}" in path "${folderDir}"`);
-
-        if (sessionCacheRef.current[folderDir]) {
-          const updatedCache = sessionCacheRef.current[folderDir].map((file) => {
-            if (file.path === folderPath && file.type === "directory") {
-              return {
-                ...file,
-                size: result.stats.totalSize,
-                fileCount: result.stats.fileCount,
-                videoCount: result.stats.videoCount,
-                avgSize: result.stats.avgSize,
-                sizeFormatted: result.stats.totalSizeFormatted,
-                totalDuration: result.stats.totalDuration,
-                totalDurationFormatted: result.stats.totalDurationFormatted,
-                sizePerHour: result.stats.sizePerHour,
-                sizePerHourFormatted: result.stats.sizePerHourFormatted,
-                cached: true,
-                lastModified: statsWithDate.lastModified,
-                upToDate: true,
-              };
-            }
-            return file;
-          });
-
-          sessionCacheRef.current = { ...sessionCacheRef.current, [folderDir]: updatedCache };
-          setSessionCache((prevCache) => ({
-            ...prevCache,
-            [folderDir]: updatedCache,
-          }));
-          console.log(`Session cache updated for "${folderDir}" with stats for "${folderPath}"`);
-        }
-      } else {
-        console.error("Failed to calculate folder size:", result.error);
-      }
-    } catch (error) {
-      console.error("Error calculating folder size:", error);
-    } finally {
-      if (!silent) {
-        setCalculatingSize((prev) => {
-          const newState = { ...prev };
-          delete newState[folderPath];
-          return newState;
-        });
-      }
-    }
-  };
+  // REMOVED: calculateFolderSize() - All stats now come from SQLite cache
+  // Use Settings > Cache > Build Index to populate cache with video metadata
 
   const loadFiles = useCallback(
     async (path = "/", forceRefresh = false) => {
@@ -264,14 +183,11 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
       try {
         const normalizedPath = path === "/" ? "/" : path.startsWith("/") ? path : "/" + path;
         console.log(`loadFiles: "${normalizedPath}" (original: "${path}", forceRefresh=${forceRefresh})`);
-        console.log(` Current session cache keys:`, Object.keys(sessionCacheRef.current));
-        console.log(`Cache exists for "${normalizedPath}"?`, !!sessionCacheRef.current[normalizedPath]);
 
+        // Check session cache first
         if (!forceRefresh && sessionCacheRef.current[normalizedPath]) {
-          console.log(`CACHE HIT: ${normalizedPath}`);
+          console.log(`SESSION CACHE HIT: ${normalizedPath}`);
           const cachedItems = sessionCacheRef.current[normalizedPath];
-          console.log(`Cache contains ${cachedItems.length} items`);
-
           setFiles(cachedItems);
           setLoadedFromCache(true);
           setLoading(false);
@@ -279,9 +195,75 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
           return;
         }
 
-        console.log(`LOADING from server: ${normalizedPath}`);
+        console.log(`Loading directory: ${normalizedPath}`);
         setLoadedFromCache(false);
 
+        // Try SQLite cache first (instant) - now returns cache + server merge
+        const cacheResult = await window.electronAPI.cacheGetDirectory(normalizedPath);
+
+        console.log(`[Cache Query] Path: ${normalizedPath}, Success: ${cacheResult.success}, Items: ${cacheResult.items?.length || 0}`);
+
+        if (cacheResult.success && cacheResult.items && cacheResult.items.length > 0) {
+          console.log(`✅ DATA LOADED: ${normalizedPath} (${cacheResult.items.length} items)`);
+
+          const items = cacheResult.items.map((item) => {
+            if (item.type === "directory") {
+              // Mapper les stats des dossiers
+              return {
+                path: item.path,
+                name: item.name,
+                type: "directory",
+                size: item.size || 0,
+                mtime: item.modified,
+                fileCount: item.fileCount || 0,
+                videoCount: item.videoCount || 0,
+                totalDuration: item.duration || 0,
+                sizeFormatted: formatBytes(item.size || 0),
+                totalDurationFormatted: formatDuration(item.duration || 0),
+                cached: item.fromCache || false,
+                fromSQLite: item.fromCache || false,
+                fromServer: item.fromServer || false,
+              };
+            } else {
+              // Mapper les fichiers
+              return {
+                path: item.path,
+                name: item.name,
+                type: "file",
+                size: item.size || 0,
+                mtime: item.modified,
+                isVideo: item.isVideo || false,
+                codec: item.codec,
+                resolution: item.resolution,
+                bitrate: item.bitrate,
+                duration: item.duration,
+                sizeFormatted: formatBytes(item.size || 0),
+                cached: item.fromCache || false,
+                fromSQLite: item.fromCache || false,
+                fromServer: item.fromServer || false,
+              };
+            }
+          });
+
+          setFiles(items);
+          if (!connected) setConnected(true);
+
+          // Save to session cache
+          sessionCacheRef.current = { ...sessionCacheRef.current, [normalizedPath]: items };
+          setSessionCache((prev) => ({ ...prev, [normalizedPath]: items }));
+
+          setLoading(false);
+
+          // Trigger background sync if cache is old (5 minutes)
+          if (cacheResult.cacheAge && cacheResult.cacheAge > 5 * 60 * 1000) {
+            console.log(`🔄 Cache is old (${Math.round(cacheResult.cacheAge / 60000)} min), syncing in background...`);
+            window.electronAPI.cacheSync(normalizedPath).catch((err) => console.error("Background sync failed:", err));
+          }
+
+          return;
+        }
+
+        console.log(`⚠️ No data available, loading from server: ${normalizedPath}`);
         const result = await window.electronAPI.webdavListDirectory(normalizedPath, true);
 
         if (!result.success) {
@@ -292,104 +274,35 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
 
         console.log(`Received ${result.items?.length || 0} items from server`);
 
-        const statsCache = loadCache();
-        console.log(`statsCache has ${Object.keys(statsCache).length} entries`);
-
-        const items = (result.items || []).map((item) => {
-          if (item.type === "directory") {
-            const hasStats = !!statsCache[item.path];
-            if (hasStats) {
-              const cachedStats = statsCache[item.path];
-              const hasDurationFields = cachedStats.hasOwnProperty("totalDuration") && cachedStats.hasOwnProperty("sizePerHour");
-
-              if (!hasDurationFields) {
-                console.log(`WARNING: Cache for "${item.name}" is outdated (missing duration fields) - will recalculate`);
-                return item;
-              }
-
-              return {
-                ...item,
-                size: cachedStats.totalSize,
-                fileCount: cachedStats.fileCount,
-                videoCount: cachedStats.videoCount,
-                avgSize: cachedStats.avgSize,
-                sizeFormatted: cachedStats.totalSizeFormatted,
-                totalDuration: cachedStats.totalDuration,
-                totalDurationFormatted: cachedStats.totalDurationFormatted,
-                sizePerHour: cachedStats.sizePerHour,
-                sizePerHourFormatted: cachedStats.sizePerHourFormatted,
-                cached: true,
-                upToDate: true,
-              };
-            }
-          }
-          return item;
-        });
-
-        const foldersFromCache = items.filter((i) => i.type === "directory" && i.cached).length;
-        const totalFolders = items.filter((i) => i.type === "directory").length;
-        console.log(`Applied stats from localStorage: ${foldersFromCache}/${totalFolders} folders have cached stats`);
+        const items = (result.items || []).map((item) => ({
+          path: item.path,
+          name: item.name,
+          type: item.type,
+          size: item.size || 0,
+          mtime: item.mtime,
+          sizeFormatted: formatBytes(item.size || 0),
+          cached: false,
+          fromServer: true,
+          // Mark folders as needing cache build
+          needsCacheBuild: item.type === "directory",
+        }));
 
         setFiles(items);
         if (!connected) setConnected(true);
 
+        // Save to session cache
         sessionCacheRef.current = { ...sessionCacheRef.current, [normalizedPath]: items };
-        setSessionCache((prev) => {
-          const updated = { ...prev, [normalizedPath]: items };
-          console.log(`SAVING to session cache: "${normalizedPath}" with ${items.length} items`);
-          console.log(` Session cache now has keys:`, Object.keys(updated));
-          return updated;
-        });
-        console.log(`Loaded ${items.length} items (${items.filter((i) => i.type === "directory").length} folders)`);
+        setSessionCache((prev) => ({ ...prev, [normalizedPath]: items }));
 
-        const foldersNeedingStats = items.filter((i) => i.type === "directory" && !i.cached && (!i.size || i.size === 0));
+        console.log(`✅ Loaded ${items.length} items from server`);
 
-        if (foldersNeedingStats.length > 0) {
-          foldersNeedingStats.sort((a, b) => a.name.localeCompare(b.name));
-          console.log(`Need to calculate stats for ${foldersNeedingStats.length} folders (sorted alphabetically)`);
-
-          setCalculatingStats({ isCalculating: true, current: 0, total: foldersNeedingStats.length });
-
-          const batchSize = 10;
-          const delayBetweenBatches = 10;
-
-          const calculateInBatches = async (folders, startIndex = 0) => {
-            if (startIndex >= folders.length) {
-              console.log(`All folder stats calculated!`);
-              setCalculatingStats({ isCalculating: false, current: 0, total: 0 });
-              return;
-            }
-
-            const batch = folders.slice(startIndex, startIndex + batchSize);
-            const remaining = folders.length - startIndex - batch.length;
-
-            console.log(`Calculating batch ${Math.floor(startIndex / batchSize) + 1}: ${batch.length} folders (${remaining} remaining)`);
-
-            setCalculatingStats({ isCalculating: true, current: startIndex + batch.length, total: folders.length });
-
-            const results = await Promise.allSettled(batch.map((folder) => calculateFolderSize(folder.path, true)));
-
-            const errors = results.filter((r) => r.status === "rejected");
-            if (errors.length > 0) {
-              console.warn(
-                `WARNING: ${errors.length} folders failed in this batch:`,
-                errors.map((e) => e.reason)
-              );
-            }
-
-            const successful = results.filter((r) => r.status === "fulfilled").length;
-            console.log(`Batch completed: ${successful}/${batch.length} successful`);
-
-            if (remaining > 0) {
-              setTimeout(() => calculateInBatches(folders, startIndex + batchSize), delayBetweenBatches);
-            } else {
-              const totalSuccess = startIndex + successful;
-              console.log(`All batches completed: ${totalSuccess}/${folders.length} folders calculated successfully`);
-              setCalculatingStats({ isCalculating: false, current: 0, total: 0 });
-            }
-          };
-
-          calculateInBatches(foldersNeedingStats);
+        // Suggest building cache if empty
+        if (items.length > 0) {
+          console.log("💡 Tip: Build cache in Settings > Cache for faster navigation and detailed stats");
+        }
+        const dirCount = items.filter((i) => i.type === "directory").length;
+        if (dirCount > 0) {
+          console.log(`💡 TIP: Build cache in Settings > Cache for instant navigation and folder stats`);
         }
       } catch (error) {
         console.error("ERROR: Error loading files:", error);
@@ -399,6 +312,68 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
     },
     [] // Pas de dépendances - loadFiles ne change jamais
   );
+
+  // Global search function
+  const handleGlobalSearch = async () => {
+    if (!globalSearchTerm || globalSearchTerm.trim().length < 2) {
+      alert("Please enter at least 2 characters to search");
+      return;
+    }
+
+    setIsSearching(true);
+    try {
+      console.log(`🔍 Global search: "${globalSearchTerm}"`);
+
+      // First check if cache has any data
+      const statsResult = await window.electronAPI.cacheGetStats();
+      if (statsResult.success && statsResult.stats.fileCount === 0) {
+        setIsSearching(false);
+        alert("Cache is empty!\n\nPlease go to Settings > Cache and click '🔨 Build Index' to scan your server and index all files with video metadata.");
+        return;
+      }
+
+      const result = await window.electronAPI.cacheSearch(globalSearchTerm, { videoOnly: false });
+
+      if (result.success) {
+        console.log(`Found ${result.results.length} results`);
+        setGlobalSearchResults(result.results);
+
+        if (result.results.length === 0) {
+          // Don't show alert, just display in the modal
+        }
+      } else {
+        console.error("Search failed:", result.error);
+        alert(`Search failed: ${result.error}`);
+      }
+    } catch (error) {
+      console.error("Error during global search:", error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsSearching(false);
+    }
+  };
+
+  // Navigate to a search result
+  const navigateToSearchResult = async (result) => {
+    console.log(`[Search] Result clicked:`, result);
+
+    setShowGlobalSearch(false);
+    setGlobalSearchTerm("");
+    setGlobalSearchResults([]);
+
+    if (result.type === "directory" || result.type === "folder") {
+      // Si c'est un dossier, aller DEDANS (dans le dossier lui-même)
+      console.log(`Navigating INTO folder: ${result.path}`);
+      setCurrentPath(result.path);
+      await loadFiles(result.path, true);
+    } else {
+      // Si c'est un fichier, aller dans le dossier parent
+      const parentPath = result.parent_path || result.parentPath || "/";
+      console.log(`Navigating to parent folder: ${parentPath} (file: ${result.name})`);
+      setCurrentPath(parentPath);
+      await loadFiles(parentPath, true);
+    }
+  };
 
   useEffect(() => {
     const initSync = async () => {
@@ -466,7 +441,6 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
   const navigateToFolder = (folderPath) => {
     const normalizedPath = folderPath.startsWith("/") ? folderPath : "/" + folderPath;
     console.log(`Navigating to: ${normalizedPath} (original: ${folderPath})`);
-    setSearchTerm(""); // Clear search when navigating to a folder
     setCurrentPath(normalizedPath);
     setTimeout(() => loadFiles(normalizedPath), 0);
   };
@@ -811,22 +785,29 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
     return sorted;
   };
 
-  const filterFiles = (filesList) => {
-    if (!searchTerm) return filesList;
-    const term = searchTerm.toLowerCase();
-    return filesList.filter((file) => file.name.toLowerCase().includes(term));
-  };
+  // REMOVED: filterFiles() - Local search removed, use Search Everywhere instead
 
   const getDisplayFiles = () => {
     let displayFiles = files;
-    displayFiles = filterFiles(displayFiles);
+    // REMOVED: Local filtering - Use global search instead
 
+    // CHANGED: Show all folders regardless of cache status
+    // Only hide folders that are confirmed empty (videoCount === 0 AND cached === true AND fromSQLite === true)
     if (userConfig?.ui?.hide_empty_folders !== false) {
       displayFiles = displayFiles.filter((file) => {
         if (file.type !== "directory") return true;
+
+        // Always show folders that are not yet indexed (fromServer === true)
+        if (file.fromServer && !file.fromSQLite) return true;
+
+        // Show folders with videos
         if (file.videoCount && file.videoCount > 0) return true;
-        if (!file.cached) return true;
-        return false;
+
+        // Hide only if folder is from SQLite cache AND has 0 videos (confirmed empty)
+        if (file.fromSQLite && file.videoCount === 0) return false;
+
+        // Default: show
+        return true;
       });
     }
 
@@ -850,37 +831,20 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
         </div>
       </div>
 
-      {calculatingStats.isCalculating && (
-        <div className="mb-3 bg-blue-900/30 border border-blue-500/50 rounded-lg p-3 flex items-center space-x-3">
-          <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400"></div>
-          <div className="flex-1">
-            <div className="text-sm text-blue-300 font-medium mb-1">
-              📊 Calculating folder statistics... {calculatingStats.current} / {calculatingStats.total}
-            </div>
-            <div className="w-full bg-gray-700 rounded-full h-2">
-              <div className="bg-blue-500 h-2 rounded-full transition-all duration-300" style={{ width: `${(calculatingStats.current / calculatingStats.total) * 100}%` }}></div>
-            </div>
-          </div>
-          <span className="text-xs text-blue-400">{Math.round((calculatingStats.current / calculatingStats.total) * 100)}%</span>
-        </div>
-      )}
+      {/* REMOVED: Batch calculation progress bar - No longer needed with unified cache */}
 
       {connected && (
         <>
           <div className="mb-4 space-y-2">
-            <div className="relative">
-              <input
-                type="text"
-                placeholder="Search files and folders..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg border border-gray-700 focus:border-blue-500 focus:outline-none"
-              />
-              {searchTerm && (
-                <button onClick={() => setSearchTerm("")} className="absolute right-2 top-2 text-gray-400 hover:text-white">
-                  ✕
-                </button>
-              )}
+            {/* REMOVED: Local search input - Use Search Everywhere instead */}
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowGlobalSearch(true)}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center gap-2 whitespace-nowrap transition-colors"
+                title="Search across all cached folders"
+              >
+                🌐 Search Everywhere
+              </button>
             </div>
 
             <div className="flex items-center space-x-2">
@@ -986,7 +950,14 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
                                   )}
                                   {file.sizePerHour > 0 && <span className="bg-green-900/40 px-2 py-0.5 rounded text-xs">📊 {file.sizePerHourFormatted || formatSize(file.sizePerHour) + "/h"}</span>}
                                   {file.avgSize > 0 && <span className="text-xs text-gray-500">⚖️ {formatSize(file.avgSize)}/file</span>}
+                                  {file.fromSQLite && (
+                                    <span className="bg-blue-900/40 px-2 py-0.5 rounded text-xs" title="Data from cache">
+                                      ✓ Cached
+                                    </span>
+                                  )}
                                 </div>
+                              ) : file.needsCacheBuild ? (
+                                <span className="text-yellow-400 text-xs">⚠️ Not indexed - Use Settings &gt; Cache &gt; Build Index</span>
                               ) : (
                                 <span>📂 Folder</span>
                               )}
@@ -1023,31 +994,7 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
                           <button onClick={() => navigateToFolder(file.path)} className="btn-secondary px-3 py-2 rounded text-white">
                             ↘️
                           </button>
-                          {!file.cached && !calculatingSize[file.path] && (
-                            <button onClick={() => calculateFolderSize(file.path, false, false)} className="btn-secondary text-xs px-3 py-2 rounded text-white" title="Calculate folder size">
-                              📊
-                            </button>
-                          )}
-                          {calculatingSize[file.path] && (
-                            <span className="text-xs text-blue-400 flex items-center">
-                              <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-400 mr-1"></div>
-                              Calculating...
-                            </span>
-                          )}
-                          {file.cached && file.upToDate !== false && currentPath !== "/" && (
-                            <button onClick={() => calculateFolderSize(file.path, false, true)} className="btn-secondary text-xs px-3 py-2 rounded text-white" title="Force refresh folder stats">
-                              🔄
-                            </button>
-                          )}
-                          {file.cached && file.upToDate === false && (
-                            <button
-                              onClick={() => calculateFolderSize(file.path, false, true)}
-                              className="bg-yellow-600 hover:bg-yellow-500 text-white px-2 py-1 rounded text-xs"
-                              title="Stats may be outdated - click to refresh"
-                            >
-                              🔄
-                            </button>
-                          )}
+                          {/* REMOVED: Calculate/Refresh buttons - Use Settings > Cache > Build Index instead */}
                           {currentPath !== "/" && (
                             <button
                               onClick={() => addToQueueSmart(file.path, file.name)}
@@ -1140,6 +1087,99 @@ window.FileTree = ({ onAddToQueue, encodedFiles, userConfig, pauseBeforeUpload }
                 Delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Global Search Modal */}
+      {showGlobalSearch && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50" onClick={() => setShowGlobalSearch(false)}>
+          <div className="bg-gray-800 rounded-lg p-6 max-w-4xl w-full mx-4 max-h-[80vh] flex flex-col border-2 border-purple-500" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-bold text-purple-400">🌐 Search Everywhere</h3>
+              <button onClick={() => setShowGlobalSearch(false)} className="text-gray-400 hover:text-white text-2xl">
+                ×
+              </button>
+            </div>
+
+            <div className="mb-4 flex gap-2">
+              <input
+                type="text"
+                placeholder="Search in all folders..."
+                value={globalSearchTerm}
+                onChange={(e) => setGlobalSearchTerm(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleGlobalSearch()}
+                className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-lg border border-gray-700 focus:border-purple-500 focus:outline-none"
+                autoFocus
+              />
+              <button
+                onClick={handleGlobalSearch}
+                disabled={isSearching || !globalSearchTerm || globalSearchTerm.trim().length < 2}
+                className="px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white rounded-lg transition-colors"
+              >
+                {isSearching ? "Searching..." : "Search"}
+              </button>
+            </div>
+
+            {isSearching && (
+              <div className="flex items-center justify-center py-8">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-400"></div>
+                <span className="ml-3 text-purple-400">Searching...</span>
+              </div>
+            )}
+
+            {!isSearching && globalSearchResults.length > 0 && (
+              <div className="flex-1 overflow-y-auto space-y-2">
+                <div className="text-sm text-gray-400 mb-2">{globalSearchResults.length} results found</div>
+                {globalSearchResults.map((result, index) => (
+                  <div
+                    key={index}
+                    onClick={() => navigateToSearchResult(result)}
+                    className="bg-gray-900 hover:bg-gray-700 p-3 rounded-lg cursor-pointer transition-colors border border-gray-700 hover:border-purple-500"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg">{result.type === "directory" ? "📁" : "🎬"}</span>
+                          <span className="text-white font-medium">{result.name}</span>
+                        </div>
+                        <div className="text-xs text-gray-400 mt-1 font-mono">{result.parent_path || result.parentPath || "/"}</div>
+                      </div>
+                      <div className="text-right text-sm text-gray-400">
+                        {result.size && <div>{formatBytes(result.size)}</div>}
+                        {result.duration && <div className="text-xs">{formatDuration(result.duration)}</div>}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {!isSearching && globalSearchResults.length === 0 && globalSearchTerm && (
+              <div className="text-center py-8">
+                <div className="text-4xl mb-3">🔍</div>
+                <div className="text-white font-medium mb-2">No results found for "{globalSearchTerm}"</div>
+                <div className="text-sm text-gray-400 mb-4">Try a different search term or check if the cache is indexed</div>
+                <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-4 max-w-md mx-auto">
+                  <div className="text-yellow-300 text-sm">
+                    💡 <strong>Tip:</strong> Go to <strong>Settings &gt; Cache</strong> and click <strong>"🔨 Build Index"</strong> to scan and index all files with video metadata.
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!globalSearchTerm && (
+              <div className="text-center py-8 text-gray-400">
+                <div className="text-4xl mb-2">🌐</div>
+                <div className="text-white font-medium mb-2">Search across all cached folders</div>
+                <div className="text-sm mt-1 mb-4">Enter at least 2 characters to search</div>
+                <div className="bg-purple-900/20 border border-purple-700 rounded-lg p-4 max-w-md mx-auto">
+                  <div className="text-purple-300 text-sm">
+                    💡 <strong>First time?</strong> Build the cache index in <strong>Settings &gt; Cache</strong> to enable global search.
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

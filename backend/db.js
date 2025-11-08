@@ -516,6 +516,51 @@ const markJobFailed = async (jobId, error) => {
 module.exports = {
   initDatabase,
   closeDatabase,
+  getDatabase: () => db,
+
+  // Helper methods for sql.js queries
+  dbRun: (sql, params = []) => {
+    if (!db) throw new Error("Database not initialized");
+    const stmt = db.prepare(sql);
+    stmt.bind(params);
+    stmt.step();
+    stmt.free();
+  },
+
+  dbGet: (sql, params = []) => {
+    if (!db) throw new Error("Database not initialized");
+    const stmt = db.prepare(sql);
+    stmt.bind(params);
+    let result = null;
+    if (stmt.step()) {
+      const cols = stmt.getColumnNames();
+      result = {};
+      cols.forEach((col, idx) => {
+        result[col] = stmt.get()[idx];
+      });
+    }
+    stmt.free();
+    return result;
+  },
+
+  dbAll: (sql, params = []) => {
+    if (!db) throw new Error("Database not initialized");
+    const stmt = db.prepare(sql);
+    stmt.bind(params);
+    const results = [];
+    while (stmt.step()) {
+      const cols = stmt.getColumnNames();
+      const row = {};
+      cols.forEach((col, idx) => {
+        row[col] = stmt.get()[idx];
+      });
+      results.push(row);
+    }
+    stmt.free();
+    return results;
+  },
+
+  saveDatabase,
   createJob,
   getJob,
   getAllJobs,

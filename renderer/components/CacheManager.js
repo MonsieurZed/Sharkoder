@@ -1,280 +1,301 @@
-/**
- * File: CacheManager.js
- * Module: Renderer/Components
- * Author: Sharkoder Team
- * Description: Cache management component for folder stats and directory structure
- * Dependencies: React, formatters (formatBytes, formatETA - loaded globally)
- * Created: 2025-11-07
- */
+const React = window.React;
+const { useState, useEffect } = React;
 
-const React = window.React; const { useState } = React;
-// formatBytes and formatETA are loaded globally from formatters.js
-
-/**
- * CacheManager Component
- * Manages local storage caches for folder statistics and directory structures
- *
- * @param {object} props - Component props
- * @param {Function} props.onClose - Callback function to close the cache manager
- * @returns {JSX.Element} Cache manager component
- */
 window.CacheManager = ({ onClose }) => {
-  const [rebuildingCache, setRebuildingCache] = useState(false);
-  const [rebuildProgress, setRebuildProgress] = useState({ current: 0, total: 0, currentFolder: "", eta: 0 });
-  const [cacheInfo, setCacheInfo] = useState({ size: 0, entries: 0 });
-  const [dirCacheInfo, setDirCacheInfo] = useState({ size: 0, entries: 0 });
-  const CACHE_KEY = "webdav_folder_stats_cache";
-  const DIRECTORY_CACHE_KEY = "webdav_directory_structure_cache";
+  const [cacheStats, setCacheStats] = useState(null);
+  const [isIndexing, setIsIndexing] = useState(false);
+  const [lastOperation, setLastOperation] = useState(null);
+  const [indexProgress, setIndexProgress] = useState(null);
 
-  // Load cache info on component mount
-  React.useEffect(() => {
-    updateCacheInfo();
+  useEffect(() => {
+    loadCacheStats();
+
+    // Listen for progress updates
+    const handleProgress = (progress) => {
+      setIndexProgress(progress);
+    };
+
+    window.electronAPI.onCacheIndexProgress?.(handleProgress);
+
+    return () => {
+      // Cleanup listener if needed
+    };
   }, []);
 
-  /**
-   * Update cache information from localStorage
-   */
-  const updateCacheInfo = () => {
+  const loadCacheStats = async () => {
     try {
-      // Stats Cache
-      const cached = localStorage.getItem(CACHE_KEY);
-      if (cached) {
-        const cache = JSON.parse(cached);
-        const entries = Object.keys(cache).length;
-        const size = new Blob([cached]).size;
-        setCacheInfo({ size, entries });
-      } else {
-        setCacheInfo({ size: 0, entries: 0 });
-      }
-
-      // Directory Structure Cache
-      const dirCached = localStorage.getItem(DIRECTORY_CACHE_KEY);
-      if (dirCached) {
-        const dirCache = JSON.parse(dirCached);
-        const entries = Object.keys(dirCache).length;
-        const size = new Blob([dirCached]).size;
-        setDirCacheInfo({ size, entries });
-      } else {
-        setDirCacheInfo({ size: 0, entries: 0 });
-      }
-    } catch (error) {
-      console.error("Error loading cache info:", error);
-      setCacheInfo({ size: 0, entries: 0 });
-      setDirCacheInfo({ size: 0, entries: 0 });
-    }
-  };
-
-  /**
-   * Clear folder stats cache
-   */
-  const clearCache = () => {
-    if (confirm("Clear all folder stats cache?\n\nThis will remove all folder statistics from cache.")) {
-      try {
-        localStorage.removeItem(CACHE_KEY);
-        updateCacheInfo();
-        alert("Stats cache cleared successfully!");
-      } catch (error) {
-        alert("Error clearing cache: " + error.message);
-      }
-    }
-  };
-
-  /**
-   * Clear directory structure cache
-   */
-  const clearDirectoryCache = () => {
-    if (confirm("⚠️ Clear directory structure cache?\n\nThis will remove all cached directory listings. Folders will be reloaded from the server on next visit.")) {
-      try {
-        localStorage.removeItem(DIRECTORY_CACHE_KEY);
-        updateCacheInfo();
-        alert("Directory cache cleared successfully!");
-      } catch (error) {
-        alert("Error clearing directory cache: " + error.message);
-      }
-    }
-  };
-
-  /**
-   * Clear all caches
-   */
-  const clearAllCaches = () => {
-    if (confirm("Clear ALL caches?\n\nThis will remove both folder statistics and directory structure caches.")) {
-      try {
-        localStorage.removeItem(CACHE_KEY);
-        localStorage.removeItem(DIRECTORY_CACHE_KEY);
-        updateCacheInfo();
-        alert("All caches cleared successfully!");
-      } catch (error) {
-        alert("Error clearing caches: " + error.message);
-      }
-    }
-  };
-
-  /**
-   * Rebuild complete cache by scanning all folders
-   */
-  const rebuildCompleteCache = async () => {
-    try {
-      setRebuildingCache(true);
-      setRebuildProgress({ current: 0, total: 0, currentFolder: "Initializing...", eta: 0 });
-
-      const startTime = Date.now();
-
-      console.log("Starting optimized cache rebuild...");
-
-      // Setup progress listener
-      const progressListener = (progress) => {
-        setRebuildProgress({
-          current: progress.current,
-          total: progress.total,
-          currentFolder: progress.currentFolder,
-          eta: progress.eta || 0,
-        });
-      };
-
-      if (window.electronAPI.onCacheProgress) {
-        window.electronAPI.onCacheProgress(progressListener);
-      }
-
-      // Call optimized backend method (single pass through entire tree)
-      const result = await window.electronAPI.buildCompleteCache();
-
+      const result = await window.electronAPI.cacheGetStats();
       if (result.success) {
-        // Save the cache
-        localStorage.setItem(CACHE_KEY, JSON.stringify(result.cache));
-        updateCacheInfo();
-
-        const totalTime = result.stats.totalTime;
-        const totalFolders = result.stats.totalFolders;
-
-        console.log(`Cache rebuilt successfully! ${totalFolders} folders in ${totalTime}s`);
-
-        // Sync cache with server after rebuild
-        console.log("Syncing cache with server...");
-        try {
-          if (window.electronAPI.syncCache) {
-            await window.electronAPI.syncCache();
-            console.log("Cache synced with server");
-          }
-        } catch (syncError) {
-          console.error("Error syncing cache:", syncError);
-        }
-
-        alert(`Cache rebuilt successfully!\n\n${totalFolders} folders scanned in ${totalTime}s\n\nOptimized single-pass algorithm used!`);
-      } else {
-        console.error("Cache rebuild failed:", result.error);
-        alert(`Cache rebuild failed: ${result.error}`);
+        setCacheStats(result.stats);
       }
     } catch (error) {
-      console.error("Error rebuilding cache:", error);
-      alert("❌ Error rebuilding cache: " + error.message);
-    } finally {
-      setRebuildingCache(false);
-      setRebuildProgress({ current: 0, total: 0, currentFolder: "", eta: 0 });
+      console.error("Failed to load cache stats:", error);
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <h3 className="text-lg font-semibold text-white">Cache Management</h3>
+  const handleSmartIndex = async () => {
+    // Détection intelligente : Full Index si cache vide, sinon Sync incrémental
+    const isEmpty = !cacheStats || cacheStats.fileCount === 0;
+    const isOld = cacheStats && (Date.now() - cacheStats.lastSync) / (1000 * 60 * 60) > 24;
 
-      {/* Cache Info */}
-      <div className="bg-gray-700 rounded-lg p-6">
-        <h4 className="text-md font-semibold mb-4 text-white">📊 Cache Statistics</h4>
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          <div className="bg-gray-800 rounded p-4 col-span-2 border-l-4 border-blue-500">
-            <div className="text-gray-400 text-sm mb-2">📁 Folder Stats Cache</div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-xs text-gray-500">Cached Folders</div>
-                <div className="text-xl font-bold text-white">{cacheInfo.entries.toLocaleString()}</div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500">Cache Size</div>
-                <div className="text-xl font-bold text-white">{formatBytes(cacheInfo.size)}</div>
-              </div>
-            </div>
-          </div>
+    let confirmMsg = "";
+    if (isEmpty) {
+      confirmMsg = "No cache found. Build complete index?\nThis will scan the entire server and may take several minutes.";
+    } else if (isOld) {
+      confirmMsg = `Cache is ${Math.round((Date.now() - cacheStats.lastSync) / (1000 * 60 * 60))} hours old.\nRefresh with incremental sync?`;
+    } else {
+      confirmMsg = "Update cache with recent changes?";
+    }
 
-          <div className="bg-gray-800 rounded p-4 col-span-2 border-l-4 border-green-500">
-            <div className="text-gray-400 text-sm mb-2">🗂️ Directory Structure Cache</div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <div className="text-xs text-gray-500">Cached Directories</div>
-                <div className="text-xl font-bold text-white">{dirCacheInfo.entries.toLocaleString()}</div>
-              </div>
-              <div>
-                <div className="text-xs text-gray-500">Cache Size</div>
-                <div className="text-xl font-bold text-white">{formatBytes(dirCacheInfo.size)}</div>
-              </div>
-            </div>
-            <div className="text-xs text-gray-400 mt-2">💡 Speeds up navigation by caching directory listings (max age: 5 min)</div>
-          </div>
+    if (!confirm(confirmMsg)) return;
 
-          <div className="bg-gray-800 rounded p-4 col-span-2">
-            <div className="text-gray-400 text-sm mb-1">Total Cache Size</div>
-            <div className="text-2xl font-bold text-white">{formatBytes(cacheInfo.size + dirCacheInfo.size)}</div>
-          </div>
-        </div>
-      </div>
+    setIsIndexing(true);
+    setIndexProgress(null);
+    setLastOperation(null);
 
-      {/* Actions */}
-      <div className="space-y-4">
-        <div className="bg-gray-700 rounded-lg p-6">
-          <h4 className="text-md font-semibold mb-2 text-white">🔄 Rebuild Complete Cache</h4>
-          <p className="text-gray-300 text-sm mb-4">Scan all folders recursively and rebuild the entire cache. This may take several minutes depending on your library size.</p>
-          <button onClick={rebuildCompleteCache} disabled={rebuildingCache} className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed">
-            {rebuildingCache ? "⏳ Rebuilding..." : "🔄 Rebuild Complete Cache"}
-          </button>
-        </div>
+    try {
+      let result;
+      if (isEmpty) {
+        // Full Index si cache vide
+        console.log("[CacheManager] Starting FULL indexation (cache empty)");
+        result = await window.electronAPI.cacheFullIndex("/");
+        if (result.success) {
+          setLastOperation({
+            type: "success",
+            message: `✅ Indexed ${result.result.files} files, ${result.result.folders} folders in ${result.result.duration.toFixed(1)}s`,
+          });
+        }
+      } else {
+        // Incremental Sync si cache existe
+        console.log("[CacheManager] Starting INCREMENTAL sync (cache exists)");
+        result = await window.electronAPI.cacheSync("/");
+        if (result.success) {
+          const { updated, added, deleted } = result.result;
+          const total = updated + added + deleted;
+          if (total === 0) {
+            setLastOperation({ type: "success", message: "✅ Cache is up to date (no changes)" });
+          } else {
+            setLastOperation({
+              type: "success",
+              message: `✅ Updated: ${updated}, Added: ${added}, Deleted: ${deleted}`,
+            });
+          }
+        }
+      }
 
-        <div className="bg-gray-700 rounded-lg p-6">
-          <h4 className="text-md font-semibold mb-2 text-white">🗑️ Clear Cache</h4>
-          <p className="text-gray-300 text-sm mb-4">Remove cached data. Choose what to clear based on your needs.</p>
-          <div className="space-y-2">
-            <button
-              onClick={clearCache}
-              disabled={rebuildingCache}
-              className="bg-orange-600 hover:bg-orange-700 text-white py-2 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-            >
-              📊 Clear Folder Stats Cache
-            </button>
-            <button
-              onClick={clearDirectoryCache}
-              disabled={rebuildingCache}
-              className="bg-orange-600 hover:bg-orange-700 text-white py-2 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed text-sm"
-            >
-              🗂️ Clear Directory Structure Cache
-            </button>
-            <button onClick={clearAllCaches} disabled={rebuildingCache} className="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded w-full disabled:opacity-50 disabled:cursor-not-allowed">
-              🗑️ Clear ALL Caches
-            </button>
-          </div>
-        </div>
-      </div>
+      if (!result.success) {
+        setLastOperation({ type: "error", message: `❌ Failed: ${result.error}` });
+      }
 
-      {/* Progress */}
-      {rebuildingCache && (
-        <div className="bg-gray-700 rounded-lg p-6">
-          <h4 className="text-md font-semibold mb-4 text-white">⏳ Rebuild Progress</h4>
+      await loadCacheStats();
+    } catch (error) {
+      console.error("[CacheManager] Index error:", error);
+      setLastOperation({ type: "error", message: `❌ Error: ${error.message}` });
+    } finally {
+      setIsIndexing(false);
+      setIndexProgress(null);
+    }
+  };
 
-          <div className="mb-4">
-            <div className="flex justify-between text-sm text-gray-300 mb-2">
-              <span>
-                {rebuildProgress.current} / {rebuildProgress.total} folders
-              </span>
-              <span>{rebuildProgress.total > 0 ? Math.round((rebuildProgress.current / rebuildProgress.total) * 100) : 0}%</span>
-            </div>
-            <div className="w-full bg-gray-600 rounded-full h-4 overflow-hidden">
-              <div className="bg-blue-500 h-full transition-all duration-300" style={{ width: `${rebuildProgress.total > 0 ? (rebuildProgress.current / rebuildProgress.total) * 100 : 0}%` }} />
-            </div>
-          </div>
+  const handleClear = async () => {
+    if (!confirm("Delete all cached data?")) return;
+    try {
+      const result = await window.electronAPI.cacheClear();
+      if (result.success) {
+        setLastOperation({ type: "success", message: "Cache cleared" });
+        await loadCacheStats();
+      } else {
+        setLastOperation({ type: "error", message: result.error });
+      }
+    } catch (error) {
+      setLastOperation({ type: "error", message: error.message });
+    }
+  };
 
-          {rebuildProgress.eta > 0 && <div className="text-sm text-gray-300 mb-2">⏱️ Estimated time remaining: {formatETA(rebuildProgress.eta)}</div>}
+  const formatBytes = (bytes) => {
+    if (!bytes) return "0 B";
+    const k = 1024;
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
+  };
 
-          <div className="text-sm text-gray-400 truncate">📁 Current: {rebuildProgress.currentFolder || "Initializing..."}</div>
-        </div>
-      )}
-    </div>
+  const getCacheAge = () => {
+    if (!cacheStats?.lastSync) return null;
+    const ageMs = Date.now() - cacheStats.lastSync;
+    const ageHours = ageMs / (1000 * 60 * 60);
+    if (ageHours < 1) return Math.round(ageHours * 60) + " min ago";
+    if (ageHours < 24) return Math.round(ageHours) + " hours ago";
+    return Math.round(ageHours / 24) + " days ago";
+  };
+
+  const needsRefresh = () => {
+    if (!cacheStats?.lastSync) return true;
+    return (Date.now() - cacheStats.lastSync) / (1000 * 60 * 60) > 24;
+  };
+
+  return React.createElement(
+    "div",
+    { className: "space-y-6" },
+    React.createElement(
+      "div",
+      { className: "bg-gray-800 border border-gray-600 rounded-lg p-4" },
+      React.createElement(
+        "h3",
+        { className: "text-lg font-semibold text-white mb-4 flex items-center gap-2" },
+        React.createElement("span", null, "📊"),
+        React.createElement("span", null, "Cache Statistics")
+      ),
+      !cacheStats
+        ? React.createElement("div", { className: "text-gray-400" }, "Loading...")
+        : cacheStats.fileCount === 0
+        ? React.createElement(
+            "div",
+            { className: "bg-yellow-900 bg-opacity-20 border border-yellow-700 rounded-lg p-4 text-yellow-300" },
+            React.createElement("div", { className: "font-semibold mb-2" }, "⚠️ Cache is empty"),
+            React.createElement("div", { className: "text-sm" }, "Click Build Full Index below")
+          )
+        : React.createElement(
+            "div",
+            { className: "grid grid-cols-2 gap-4" },
+            React.createElement(
+              "div",
+              { className: "bg-gray-900 rounded-lg p-3" },
+              React.createElement("div", { className: "text-gray-400 text-sm mb-1" }, "Files Indexed"),
+              React.createElement(
+                "div",
+                { className: "text-white text-2xl font-bold" },
+                (isIndexing && indexProgress.fileCount !== undefined ? indexProgress.fileCount : cacheStats.fileCount).toLocaleString()
+              )
+            ),
+            React.createElement(
+              "div",
+              { className: "bg-gray-900 rounded-lg p-3" },
+              React.createElement("div", { className: "text-gray-400 text-sm mb-1" }, "Folders Indexed"),
+              React.createElement(
+                "div",
+                { className: "text-white text-2xl font-bold" },
+                (isIndexing && indexProgress.folderCount !== undefined ? indexProgress.folderCount : cacheStats.folderCount).toLocaleString()
+              )
+            ),
+            React.createElement(
+              "div",
+              { className: "bg-gray-900 rounded-lg p-3" },
+              React.createElement("div", { className: "text-gray-400 text-sm mb-1" }, "Total Size"),
+              React.createElement(
+                "div",
+                { className: "text-white text-2xl font-bold" },
+                formatBytes(isIndexing && indexProgress.totalSize !== undefined ? indexProgress.totalSize : cacheStats.totalSize)
+              )
+            ),
+            React.createElement(
+              "div",
+              { className: "bg-gray-900 rounded-lg p-3" },
+              React.createElement("div", { className: "text-gray-400 text-sm mb-1" }, "Last Sync"),
+              React.createElement("div", { className: "text-white text-lg font-bold" }, getCacheAge()),
+              needsRefresh() && React.createElement("div", { className: "text-red-400 text-xs mt-1" }, "⚠️ Cache is old")
+            )
+          )
+    ),
+    isIndexing &&
+      React.createElement(
+        "div",
+        { className: "bg-blue-900 bg-opacity-20 border border-blue-700 rounded-lg p-4" },
+        React.createElement(
+          "div",
+          { className: "text-blue-400 font-semibold mb-3 flex items-center gap-2" },
+          React.createElement("span", { className: "animate-spin" }, "⏳"),
+          React.createElement("span", null, "Indexing in progress...")
+        ),
+        indexProgress &&
+          React.createElement(
+            "div",
+            { className: "space-y-2 mb-3" },
+            React.createElement(
+              "div",
+              { className: "text-gray-300 text-sm" },
+              React.createElement("div", { className: "mb-2" }, `📁 ${indexProgress.currentPath}`),
+              React.createElement(
+                "div",
+                { className: "flex flex-wrap gap-4 text-xs" },
+                indexProgress.fileCount > 0 && React.createElement("div", { className: "text-green-300" }, `📄 ${indexProgress.fileCount.toLocaleString()} files`),
+                indexProgress.folderCount > 0 && React.createElement("div", { className: "text-purple-300" }, `📂 ${indexProgress.folderCount.toLocaleString()} folders`),
+                indexProgress.rate > 0 && React.createElement("div", { className: "text-blue-300" }, `⚡ ${indexProgress.rate} files/sec`),
+                indexProgress.elapsed && React.createElement("div", { className: "text-yellow-300" }, `⏱️ ${indexProgress.elapsed}`),
+                indexProgress.eta && React.createElement("div", { className: "text-cyan-300 font-semibold" }, `🎯 ETA: ${indexProgress.eta}`)
+              )
+            )
+          ),
+        React.createElement(
+          "div",
+          { className: "w-full bg-gray-700 rounded-full h-2" },
+          React.createElement("div", { className: "bg-blue-500 h-2 rounded-full animate-pulse", style: { width: "100%" } })
+        )
+      ),
+    lastOperation &&
+      React.createElement(
+        "div",
+        {
+          className: `rounded-lg p-4 border ${lastOperation.type === "success" ? "bg-green-900 bg-opacity-20 border-green-700" : "bg-red-900 bg-opacity-20 border-red-700"}`,
+        },
+        React.createElement(
+          "div",
+          { className: `font-semibold flex items-center gap-2 ${lastOperation.type === "success" ? "text-green-400" : "text-red-400"}` },
+          React.createElement("span", null, lastOperation.type === "success" ? "✅" : "❌"),
+          React.createElement("span", null, lastOperation.message)
+        )
+      ),
+    React.createElement(
+      "div",
+      { className: "bg-gray-800 border border-gray-600 rounded-lg p-4" },
+      React.createElement(
+        "h3",
+        { className: "text-lg font-semibold text-white mb-4 flex items-center gap-2" },
+        React.createElement("span", null, "🔧"),
+        React.createElement("span", null, "Cache Management")
+      ),
+      React.createElement(
+        "div",
+        { className: "space-y-3" },
+        React.createElement(
+          "div",
+          { className: "flex items-center justify-between p-3 bg-gray-900 rounded-lg" },
+          React.createElement(
+            "div",
+            null,
+            React.createElement("div", { className: "text-white font-medium" }, "🔨 Build Index"),
+            React.createElement("div", { className: "text-gray-400 text-sm" }, cacheStats?.fileCount === 0 ? "Scan entire server" : "Update changes (incremental)")
+          ),
+          React.createElement(
+            "button",
+            {
+              onClick: handleSmartIndex,
+              disabled: isIndexing,
+              className: "px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 text-white rounded font-medium",
+            },
+            isIndexing ? "⏳ Indexing..." : cacheStats?.fileCount === 0 ? "🔨 Build" : "🔄 Update"
+          )
+        ),
+        React.createElement(
+          "div",
+          { className: "flex items-center justify-between p-3 bg-gray-900 rounded-lg" },
+          React.createElement(
+            "div",
+            null,
+            React.createElement("div", { className: "text-white font-medium" }, "Clear Cache"),
+            React.createElement("div", { className: "text-gray-400 text-sm" }, "Delete all cached data")
+          ),
+          React.createElement(
+            "button",
+            {
+              onClick: handleClear,
+              disabled: isIndexing,
+              className: "px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-gray-600 text-white rounded",
+            },
+            "🗑️ Clear"
+          )
+        )
+      )
+    )
   );
 };

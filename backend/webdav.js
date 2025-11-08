@@ -120,6 +120,7 @@ class WebDAVManager {
 
       const contents = await this.client.getDirectoryContents(fullPath, {
         details: false, // Get simple array format
+        deep: false, // CRITICAL: Only list direct children, not recursive
       });
 
       // Handle both array and object responses

@@ -9,11 +9,10 @@
  * Extracted from index.html - Full working implementation
  */
 
-const React = window.React;
-const { useState } = React;
-// CacheManager and CodecSelector are loaded globally
+import React, { useState } from "react";
+import PresetManager from "./PresetManager";
 
-window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
+const SettingsPanel = ({ userConfig, onSave, onClose }) => {
   // Initialize with modern structured config matching backend/config.js
   const defaultConfig = {
     ffmpeg: {
@@ -82,6 +81,10 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
         max_prefetch_files: 1,
         retry_attempts: 2,
         connection_timeout: 30000,
+      },
+      cache: {
+        concurrent_video_probes: 10,
+        probe_timeout_ms: 10000,
       },
       behavior: {
         log_level: "info",
@@ -365,6 +368,9 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
           <button onClick={() => setActiveTab("ffmpeg")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "ffmpeg" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
             🎬 FFmpeg
           </button>
+          <button onClick={() => setActiveTab("presets")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "presets" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
+            🎛️ Presets
+          </button>
           <button onClick={() => setActiveTab("remote")} className={`px-6 py-3 whitespace-nowrap ${activeTab === "remote" ? "border-b-2 border-blue-500 text-blue-500" : "text-gray-400"}`}>
             🌐 Remote Server
           </button>
@@ -386,67 +392,6 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
         <div className="h-[650px] overflow-y-auto p-6 space-y-6">
           {activeTab === "ffmpeg" && (
             <>
-              {/* ===== PRESET MANAGEMENT - MULTIPLE PRESETS ===== */}
-              <div className="bg-gray-800 border border-gray-600 rounded-lg p-4 space-y-4">
-                <h3 className="text-md font-semibold text-white mb-3">📦 Gestion des Présets FFmpeg</h3>
-
-                {/* List and Load Presets */}
-                <div className="space-y-2">
-                  <label className="block text-sm text-gray-300">Présets disponibles sur le serveur ({availablePresets.length})</label>
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedPreset}
-                      onChange={(e) => setSelectedPreset(e.target.value)}
-                      className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                      disabled={loadingPresets}
-                    >
-                      <option value="">-- Sélectionner un preset --</option>
-                      {availablePresets.map((preset) => (
-                        <option key={preset.name} value={preset.name}>
-                          {preset.name} {preset.modified ? `(${new Date(preset.modified).toLocaleDateString()})` : ""}
-                        </option>
-                      ))}
-                    </select>
-                    <button onClick={loadPresetList} className="bg-gray-700 hover:bg-gray-600 text-white px-3 py-2 rounded" title="Rafraîchir la liste" disabled={loadingPresets}>
-                      🔄
-                    </button>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <button onClick={loadSelectedPreset} className="btn-secondary flex-1" disabled={!selectedPreset} title="Charger le preset sélectionné">
-                      📥 Charger
-                    </button>
-                    <button onClick={deleteSelectedPreset} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded" disabled={!selectedPreset} title="Supprimer le preset sélectionné">
-                      🗑️ Supprimer
-                    </button>
-                  </div>
-                </div>
-
-                {/* Save New Preset */}
-                <div className="space-y-2 pt-3 border-t border-gray-700">
-                  <label className="block text-sm text-gray-300">Sauvegarder la configuration actuelle comme nouveau preset</label>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={newPresetName}
-                      onChange={(e) => setNewPresetName(e.target.value)}
-                      placeholder="Nom du preset (ex: HEVC_Quality, H264_Fast...)"
-                      className="flex-1 bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
-                      onKeyPress={(e) => {
-                        if (e.key === "Enter") saveNewPreset();
-                      }}
-                    />
-                    <button onClick={saveNewPreset} className="btn-success px-4" disabled={!newPresetName.trim()} title="Sauvegarder comme nouveau preset">
-                      💾 Sauvegarder
-                    </button>
-                  </div>
-                </div>
-
-                <p className="text-xs text-gray-400">
-                  Les présets sont sauvegardés dans <code>/presets/ffmpeg_*.json</code> sur le serveur WebDAV/SFTP
-                </p>
-              </div>
-
               {/* ===== CODEC SELECTION ===== */}
               <CodecSelector config={config} updateConfigNested={updateConfigNested} />
 
@@ -488,6 +433,7 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
                       CQ - Constant Quality
                       <span className="ml-2 text-xs text-blue-400">(0-51)</span>
                     </label>
+
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
@@ -1201,6 +1147,19 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
             </>
           )}
 
+          {/* ===== PRESETS TAB ===== */}
+
+          {activeTab === "presets" &&
+            React.createElement(PresetManager, {
+              currentConfig: config,
+              onApplyPreset: (preset) => {
+                // Apply preset to config
+                if (preset.ffmpeg) {
+                  setConfig({ ...config, ffmpeg: preset.ffmpeg });
+                }
+              },
+            })}
+
           {activeTab === "remote" && (
             <>
               <div className="space-y-4">
@@ -1666,6 +1625,66 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
               </div>
 
               <div className="space-y-4 pt-4 border-t border-gray-700">
+                <h3 className="text-lg font-semibold text-white">🚀 Cache & Indexation Performance</h3>
+                <p className="text-sm text-gray-400 mb-4">Optimize video probing speed during cache indexation. Higher parallelization = faster indexing but more network/server load.</p>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">
+                      Concurrent Video Probes
+                      <span className="text-gray-500 text-xs ml-2">(Parallel FFprobe)</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="20"
+                      value={config.advanced?.cache?.concurrent_video_probes || 10}
+                      onChange={(e) => updateConfig("advanced.cache.concurrent_video_probes", parseInt(e.target.value))}
+                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Default: 10 (recommended). Higher = faster indexing (~10x speedup).</p>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-300 mb-2">
+                      Probe Timeout (ms)
+                      <span className="text-gray-500 text-xs ml-2">(Per video)</span>
+                    </label>
+                    <input
+                      type="number"
+                      min="5000"
+                      max="30000"
+                      step="1000"
+                      value={config.advanced?.cache?.probe_timeout_ms || 10000}
+                      onChange={(e) => updateConfig("advanced.cache.probe_timeout_ms", parseInt(e.target.value))}
+                      className="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">Default: 10000ms (10s). Max time to probe each video file.</p>
+                  </div>
+                </div>
+
+                <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4 mt-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">⚡</span>
+                    <div className="flex-1">
+                      <h4 className="text-sm font-semibold text-blue-400 mb-1">Performance Impact</h4>
+                      <ul className="text-xs text-gray-400 space-y-1">
+                        <li>
+                          • <strong>10 parallel probes:</strong> ~10x faster indexing (recommended)
+                        </li>
+                        <li>
+                          • <strong>15-20 parallel:</strong> Maximum speed but higher server load
+                        </li>
+                        <li>
+                          • <strong>1-5 parallel:</strong> Slower but gentler on network/server
+                        </li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-4 pt-4 border-t border-gray-700">
                 <h3 className="text-lg font-semibold text-white">Behavior</h3>
 
                 <div className="space-y-3">
@@ -1841,3 +1860,5 @@ window.SettingsPanel = ({ userConfig, onSave, onClose }) => {
     </div>
   );
 };
+
+export default SettingsPanel;
